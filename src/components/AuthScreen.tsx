@@ -166,6 +166,12 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated }) => {
               </div>
             </label>
 
+            {mode === 'login' && (
+              <p className="text-xs text-slate-500 leading-relaxed">
+                نسيت كلمة المرور؟ تواصل مع صاحب التطبيق ليرسل لك رابطاً تختار منه كلمة مرور جديدة.
+              </p>
+            )}
+
             {error && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
                 {error}

@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AppProvider, useApp, SavedAppData } from './context/AppContext';
 import { AuthScreen } from './components/AuthScreen';
 import { SettingsView } from './components/SettingsView';
+import { ResetPasswordScreen } from './components/ResetPasswordScreen';
 import { api, ApiError, AuthUser } from './lib/api';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Header } from './components/Header';
@@ -101,6 +102,15 @@ const FullScreenMessage: React.FC<{ children: React.ReactNode }> = ({ children }
 
 export default function App() {
   const [session, setSession] = useState<Session>({ status: 'loading' });
+  const [resetToken, setResetToken] = useState<string | null>(() => {
+    const t = new URLSearchParams(window.location.search).get('reset');
+    return t && /^[0-9a-f]{64}$/.test(t) ? t : null;
+  });
+
+  const clearResetFromUrl = useCallback(() => {
+    window.history.replaceState(null, '', window.location.pathname);
+    setResetToken(null);
+  }, []);
 
   const loadAccount = useCallback(async (knownUser?: AuthUser) => {
     setSession({ status: 'loading' });
@@ -128,6 +138,22 @@ export default function App() {
   }, []);
 
   const handleLoggedOut = useCallback(() => setSession({ status: 'signed_out' }), []);
+
+  if (resetToken) {
+    return (
+      <ResetPasswordScreen
+        token={resetToken}
+        onDone={(user) => {
+          clearResetFromUrl();
+          loadAccount(user);
+        }}
+        onCancel={() => {
+          clearResetFromUrl();
+          loadAccount();
+        }}
+      />
+    );
+  }
 
   if (session.status === 'loading') {
     return (

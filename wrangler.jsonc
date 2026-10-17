@@ -21,5 +21,9 @@
   ],
   // تنظيف يومي للجلسات المنتهية
   "triggers": { "crons": ["17 3 * * *"] },
+  // بصمة بريد المدير (وليس البريد نفسه)، ليظهر له وحده زر لوحة الإدارة
+  "vars": {
+    "ADMIN_EMAIL_HASHES": "2a6453954c4c4a6c3cae0dd0729de54fd296612dd0a1ef3287cf353f29c2a93c"
+  },
   "observability": { "enabled": true }
 }

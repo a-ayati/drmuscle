@@ -4,6 +4,7 @@
  * - /api/auth/*       فتح حساب بالبريد وكلمة المرور، الدخول، الخروج، تغيير كلمة المرور.
  * - /api/state        بيانات كل مستخدم (ملفه، خطته، مشترياته، تقدّمه) محفوظة في قاعدة D1.
  * - /api/account      حذف الحساب نهائياً.
+ * - /api/admin/*       للمدير فقط: قائمة المستخدمين، وإنشاء رابط استرجاع كلمة المرور.
  * - /api/assistant/*  «كابتن على قدّك»: ردود جاهزة داخل الخادم، ويستعمل Gemini فقط إذا أُضيف
  *                     المفتاح GEMINI_API_KEY كسرّ في Cloudflare (غير مفعّل افتراضياً).
  * - كل ما عدا ذلك: واجهة التطبيق من مجلد dist.
@@ -21,6 +22,8 @@ export interface Env {
   GEMINI_MODEL?: string;
   /** اختياري: بريد أو أكثر (مفصولة بفواصل) يظهر لأصحابها زر لوحة الإدارة. */
   ADMIN_EMAILS?: string;
+  /** بصمات SHA-256 لبريد المدير (مفصولة بفواصل)، حتى لا يظهر البريد نفسه في المستودع العام. */
+  ADMIN_EMAIL_HASHES?: string;
 }
 
 const SESSION_COOKIE = 'aq_session';
@@ -32,6 +35,7 @@ const LOGIN_MAX_PER_IP = 20;
 const LOGIN_MAX_PER_EMAIL = 8;
 const REGISTER_MAX_PER_IP_PER_HOUR = 10;
 const CHAT_MAX_PER_HOUR = 40;
+const RESET_LINK_MINUTES = 60;
 
 // ───────────────────────── أدوات عامة ─────────────────────────
 
@@ -185,6 +189,12 @@ function ensureSchema(env: Env): Promise<void> {
         at INTEGER NOT NULL
       )`),
       env.DB.prepare('CREATE INDEX IF NOT EXISTS rate_events_bucket ON rate_events(bucket, at)'),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS password_resets (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER
+      )`),
     ]).then(() => undefined).catch((err) => {
       schemaReady = null;
       throw err;
@@ -235,16 +245,20 @@ async function currentUser(env: Env, req: Request): Promise<UserRow | null> {
   return row ?? null;
 }
 
-function isAdmin(env: Env, email: string): boolean {
-  const list = (env.ADMIN_EMAILS || '')
+const splitList = (v?: string) =>
+  (v || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return list.includes(email);
+
+async function isAdmin(env: Env, email: string): Promise<boolean> {
+  if (splitList(env.ADMIN_EMAILS).includes(email)) return true;
+  const hashes = splitList(env.ADMIN_EMAIL_HASHES);
+  return hashes.length > 0 && hashes.includes(await sha256(email));
 }
 
-function publicUser(env: Env, u: UserRow) {
-  return { id: u.id, email: u.email, name: u.name, isAdmin: isAdmin(env, u.email), createdAt: u.created_at };
+async function publicUser(env: Env, u: UserRow) {
+  return { id: u.id, email: u.email, name: u.name, isAdmin: await isAdmin(env, u.email), createdAt: u.created_at };
 }
 
 // ───────────────────────── الحسابات ─────────────────────────
@@ -283,7 +297,7 @@ async function register(req: Request, env: Env): Promise<Response> {
 
   const cookie = await createSession(env, req, id);
   const user: UserRow = { id, email, name, pass_hash: hash, pass_salt: salt, pass_iter: PBKDF2_ITERATIONS, created_at: now };
-  return json({ user: publicUser(env, user), isNew: true }, 201, { 'set-cookie': cookie });
+  return json({ user: await publicUser(env, user), isNew: true }, 201, { 'set-cookie': cookie });
 }
 
 async function login(req: Request, env: Env): Promise<Response> {
@@ -313,7 +327,7 @@ async function login(req: Request, env: Env): Promise<Response> {
   }
 
   const cookie = await createSession(env, req, user.id);
-  return json({ user: publicUser(env, user) }, 200, { 'set-cookie': cookie });
+  return json({ user: await publicUser(env, user) }, 200, { 'set-cookie': cookie });
 }
 
 async function logout(req: Request, env: Env): Promise<Response> {
@@ -356,7 +370,7 @@ async function updateName(req: Request, env: Env, user: UserRow): Promise<Respon
   const name = cleanName(body?.name);
   if (!name) return fail('اكتب اسمك.');
   await env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(name, user.id).run();
-  return json({ user: publicUser(env, { ...user, name }) });
+  return json({ user: await publicUser(env, { ...user, name }) });
 }
 
 async function deleteAccount(req: Request, env: Env, user: UserRow): Promise<Response> {
@@ -369,6 +383,97 @@ async function deleteAccount(req: Request, env: Env, user: UserRow): Promise<Res
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
   ]);
   return json({ ok: true }, 200, { 'set-cookie': sessionCookie(req, '', 0) });
+}
+
+// ───────────────────────── استرجاع كلمة المرور ─────────────────────────
+// لا يوجد إرسال بريد: المدير ينشئ رابطاً صالحاً لساعة ولمرة واحدة، ويرسله للمستخدم بنفسه.
+
+async function adminListUsers(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    `SELECT u.id, u.email, u.name, u.created_at, s.updated_at AS last_saved
+     FROM users u LEFT JOIN user_state s ON s.user_id = u.id
+     ORDER BY u.created_at DESC LIMIT 500`,
+  ).all<{ id: string; email: string; name: string; created_at: number; last_saved: number | null }>();
+  return json({
+    users: rows.results.map((r) => ({
+      id: r.id,
+      email: r.email,
+      name: r.name,
+      createdAt: r.created_at,
+      lastSavedAt: r.last_saved,
+    })),
+  });
+}
+
+async function adminResetLink(req: Request, env: Env): Promise<Response> {
+  const body = await readJson<{ userId?: string }>(req);
+  if (!body?.userId) return fail('طلب غير صالح.');
+  const target = await env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+    .bind(body.userId)
+    .first<{ id: string; email: string; name: string }>();
+  if (!target) return fail('المستخدم غير موجود.', 404);
+
+  const token = randomHex(32);
+  const expiresAt = Date.now() + RESET_LINK_MINUTES * 60_000;
+  await env.DB.batch([
+    // رابط واحد فعّال لكل مستخدم: نلغي الروابط السابقة
+    env.DB.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').bind(target.id),
+    env.DB.prepare('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)').bind(
+      await sha256(token),
+      target.id,
+      expiresAt,
+    ),
+  ]);
+  const url = `${new URL(req.url).origin}/?reset=${token}`;
+  return json({ url, expiresAt, name: target.name, email: target.email });
+}
+
+async function checkReset(env: Env, url: URL): Promise<Response> {
+  const token = url.searchParams.get('token') || '';
+  if (!/^[0-9a-f]{64}$/.test(token)) return fail('الرابط غير صالح.', 400);
+  const row = await env.DB.prepare(
+    `SELECT u.name, u.email FROM password_resets r JOIN users u ON u.id = r.user_id
+     WHERE r.token_hash = ? AND r.used_at IS NULL AND r.expires_at > ?`,
+  )
+    .bind(await sha256(token), Date.now())
+    .first<{ name: string; email: string }>();
+  if (!row) return fail('انتهت صلاحية هذا الرابط أو استُعمل من قبل. اطلب رابطاً جديداً.', 410);
+  return json({ name: row.name, email: row.email });
+}
+
+async function completeReset(req: Request, env: Env): Promise<Response> {
+  const body = await readJson<{ token?: string; password?: string }>(req);
+  const token = body?.token || '';
+  if (!/^[0-9a-f]{64}$/.test(token)) return fail('الرابط غير صالح.');
+  const pwError = validatePassword(body?.password);
+  if (pwError) return fail(pwError);
+  if (await overLimit(env, `reset-ip:${clientIp(req)}`, LOGIN_WINDOW_MIN, LOGIN_MAX_PER_IP)) {
+    return fail('محاولات كثيرة. حاول بعد قليل.', 429);
+  }
+
+  const tokenHash = await sha256(token);
+  const row = await env.DB.prepare(
+    'SELECT user_id FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?',
+  )
+    .bind(tokenHash, Date.now())
+    .first<{ user_id: string }>();
+  if (!row) return fail('انتهت صلاحية هذا الرابط أو استُعمل من قبل. اطلب رابطاً جديداً.', 410);
+
+  const salt = randomHex(16);
+  const hash = await pbkdf2(body!.password as string, salt, PBKDF2_ITERATIONS);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET pass_hash = ?, pass_salt = ?, pass_iter = ? WHERE id = ?').bind(
+      hash,
+      salt,
+      PBKDF2_ITERATIONS,
+      row.user_id,
+    ),
+    env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ?').bind(Date.now(), tokenHash),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.user_id),
+  ]);
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(row.user_id).first<UserRow>();
+  const cookie = await createSession(env, req, row.user_id);
+  return json({ user: await publicUser(env, user!) }, 200, { 'set-cookie': cookie });
 }
 
 // ───────────────────────── بيانات المستخدم ─────────────────────────
@@ -486,11 +591,13 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (pathname === '/api/auth/register' && method === 'POST') return register(req, env);
   if (pathname === '/api/auth/login' && method === 'POST') return login(req, env);
   if (pathname === '/api/auth/logout' && method === 'POST') return logout(req, env);
+  if (pathname === '/api/auth/reset' && method === 'GET') return checkReset(env, url);
+  if (pathname === '/api/auth/reset' && method === 'POST') return completeReset(req, env);
 
   const user = await currentUser(env, req);
 
   if (pathname === '/api/auth/me' && method === 'GET') {
-    return user ? json({ user: publicUser(env, user) }) : json({ user: null }, 401);
+    return user ? json({ user: await publicUser(env, user) }) : json({ user: null }, 401);
   }
   if (!user) return fail('سجّل الدخول أولاً.', 401);
 
@@ -500,6 +607,12 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (pathname === '/api/state' && method === 'GET') return getState(env, user);
   if (pathname === '/api/state' && method === 'PUT') return putState(req, env, user);
   if (pathname === '/api/assistant/chat' && method === 'POST') return coachChat(req, env, user);
+
+  if (pathname.startsWith('/api/admin/')) {
+    if (!(await isAdmin(env, user.email))) return fail('هذه الصفحة للمدير فقط.', 403);
+    if (pathname === '/api/admin/users' && method === 'GET') return adminListUsers(env);
+    if (pathname === '/api/admin/reset-link' && method === 'POST') return adminResetLink(req, env);
+  }
 
   return fail('غير موجود.', 404);
 }
@@ -525,6 +638,7 @@ export default {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM rate_events WHERE at < ?').bind(now - 2 * 86_400_000),
+      env.DB.prepare('DELETE FROM password_resets WHERE expires_at < ?').bind(now - 86_400_000),
     ]);
   },
 } satisfies ExportedHandler<Env>;

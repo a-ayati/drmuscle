@@ -55,6 +55,19 @@ export const api = {
     request<{ user: AuthUser }>('/api/account/name', { method: 'POST', body: JSON.stringify({ name }) }),
   deleteAccount: (password: string) =>
     request<{ ok: true }>('/api/account/delete', { method: 'POST', body: JSON.stringify({ password }) }),
+  checkReset: (token: string) =>
+    request<{ name: string; email: string }>(`/api/auth/reset?token=${encodeURIComponent(token)}`),
+  completeReset: (token: string, password: string) =>
+    request<{ user: AuthUser }>('/api/auth/reset', { method: 'POST', body: JSON.stringify({ token, password }) }),
+  adminUsers: () =>
+    request<{
+      users: { id: string; email: string; name: string; createdAt: number; lastSavedAt: number | null }[];
+    }>('/api/admin/users'),
+  adminResetLink: (userId: string) =>
+    request<{ url: string; expiresAt: number; name: string; email: string }>('/api/admin/reset-link', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
   getState: () => request<{ data: Record<string, unknown> | null; updatedAt: number | null }>('/api/state'),
   putState: (data: Record<string, unknown>, keepalive = false) =>
     request<{ ok: true; updatedAt: number }>('/api/state', {

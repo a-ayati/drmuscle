@@ -14,9 +14,11 @@ import {
   Lock,
 } from 'lucide-react';
 
+import { AdminUsersTab } from './AdminUsersTab';
+
 export const AdminView: React.FC = () => {
   const { userProfile, allMeals, exerciseLibrary, shoppingList, setIsAdminMode } = useApp();
-  const [activeAdminTab, setActiveAdminTab] = useState<'tiers' | 'prices' | 'exercises' | 'feedback'>('tiers');
+  const [activeAdminTab, setActiveAdminTab] = useState<'users' | 'tiers' | 'prices' | 'exercises' | 'feedback'>('users');
 
   return (
     <div className="space-y-6 pb-20 lg:pb-12">
@@ -47,6 +49,7 @@ export const AdminView: React.FC = () => {
         {/* Admin Navigation Tabs */}
         <div className="flex items-center gap-2 overflow-x-auto pt-6 mt-2 border-t border-slate-100 no-scrollbar">
           {[
+            { id: 'users', label: 'المستخدمون' },
             { id: 'tiers', label: 'باقات الاشتراك' },
             { id: 'prices', label: 'مؤشر أسعار السوق' },
             { id: 'exercises', label: 'إدارة التمارين' },
@@ -57,7 +60,7 @@ export const AdminView: React.FC = () => {
               onClick={() => setActiveAdminTab(tab.id as any)}
               className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
                 activeAdminTab === tab.id
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-emerald-600 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -66,6 +69,8 @@ export const AdminView: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {activeAdminTab === 'users' && <AdminUsersTab />}
 
       {/* Tab 1: Subscription Tiers Showcase */}
       {activeAdminTab === 'tiers' && (
