@@ -1,0 +1,6 @@
+{
+  "name": "على قدّك - غذاؤك حسب ميزانيتك وتمرينك حسب مستواك",
+  "description": "منصة وتطبيق متكامل يجمع التخطيط الغذائي الذكي حسب الميزانية وبرامج تمارين مخصصة مع مدرب تفاعلي ومساعد ذكي.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
