@@ -3,8 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppProvider, useApp, SavedAppData } from './context/AppContext';
+import { AuthScreen } from './components/AuthScreen';
+import { SettingsView } from './components/SettingsView';
+import { api, ApiError, AuthUser } from './lib/api';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { TodayView } from './components/TodayView';
@@ -20,7 +24,7 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { MessageSquareText, Shield, Heart } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { activeTab, isAdminMode, setIsChatDrawerOpen } = useApp();
+  const { activeTab, isAdminMode, setIsChatDrawerOpen, isOnboardingOpen } = useApp();
 
   return (
     <div className="min-h-screen bg-[#fbfbf9] text-slate-800 flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
@@ -39,6 +43,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'shopping' && <ShoppingView />}
             {activeTab === 'library' && <ExerciseLibraryView />}
             {activeTab === 'progress' && <ProgressView />}
+            {activeTab === 'settings' && <SettingsView />}
           </>
         )}
       </main>
@@ -74,14 +79,93 @@ const AppContent: React.FC = () => {
       {/* 6. Modals & Drawers */}
       <LiveWorkoutModal />
       <AICoachDrawer />
-      <OnboardingModal />
+      {isOnboardingOpen && <OnboardingModal />}
     </div>
   );
 };
 
+type Session =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'signed_out' }
+  | { status: 'signed_in'; user: AuthUser; data: Partial<SavedAppData> | null; savedAt: number | null };
+
+const FullScreenMessage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="min-h-screen bg-[#fbfbf9] flex flex-col items-center justify-center gap-4 px-6 text-center text-slate-600">
+    <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-2xl shadow-sm">
+      ع
+    </div>
+    {children}
+  </div>
+);
+
 export default function App() {
+  const [session, setSession] = useState<Session>({ status: 'loading' });
+
+  const loadAccount = useCallback(async (knownUser?: AuthUser) => {
+    setSession({ status: 'loading' });
+    try {
+      const user = knownUser ?? (await api.me()).user;
+      const state = await api.getState();
+      setSession({
+        status: 'signed_in',
+        user,
+        data: (state.data as Partial<SavedAppData> | null) ?? null,
+        savedAt: state.updatedAt,
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) setSession({ status: 'signed_out' });
+      else setSession({ status: 'error', message: err instanceof Error ? err.message : 'تعذر تحميل حسابك.' });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAccount();
+  }, [loadAccount]);
+
+  const handleUserChange = useCallback((user: AuthUser) => {
+    setSession((prev) => (prev.status === 'signed_in' ? { ...prev, user } : prev));
+  }, []);
+
+  const handleLoggedOut = useCallback(() => setSession({ status: 'signed_out' }), []);
+
+  if (session.status === 'loading') {
+    return (
+      <FullScreenMessage>
+        <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+        <p className="text-sm">جارٍ تحميل خطتك…</p>
+      </FullScreenMessage>
+    );
+  }
+
+  if (session.status === 'error') {
+    return (
+      <FullScreenMessage>
+        <p className="text-sm max-w-sm">{session.message}</p>
+        <button
+          onClick={() => loadAccount()}
+          className="h-11 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm flex items-center gap-2"
+        >
+          <RefreshCw className="w-4 h-4 text-white" />
+          <span>حاول مجدداً</span>
+        </button>
+      </FullScreenMessage>
+    );
+  }
+
+  if (session.status === 'signed_out') {
+    return <AuthScreen onAuthenticated={(user) => loadAccount(user)} />;
+  }
+
   return (
-    <AppProvider>
+    <AppProvider
+      key={session.user.id}
+      user={session.user}
+      initialData={session.data}
+      initialSavedAt={session.savedAt}
+      onUserChange={handleUserChange}
+      onLoggedOut={handleLoggedOut}
+    >
       <AppContent />
     </AppProvider>
   );

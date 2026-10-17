@@ -16,6 +16,7 @@ import {
   Dumbbell
 } from 'lucide-react';
 import { UserProfile, GoalType, ExperienceLevel, ActivityLevel } from '../types';
+import { COUNTRIES, currencyFor } from '../data/countries';
 
 export const OnboardingModal: React.FC = () => {
   const {
@@ -41,7 +42,7 @@ export const OnboardingModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto shadow-2xl p-6 sm:p-8 space-y-6">
+      <div className="bg-white rounded-3xl max-w-2xl w-full min-w-0 max-h-[92vh] overflow-y-auto overflow-x-hidden shadow-2xl p-5 sm:p-8 space-y-6">
         {/* Top Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
@@ -209,15 +210,23 @@ export const OnboardingModal: React.FC = () => {
                     <label className="font-semibold text-slate-800 block mb-1">الدولة</label>
                     <select
                       value={formData.country}
-                      onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          country: e.target.value,
+                          currency: currencyFor(e.target.value) ?? formData.currency,
+                        })
+                      }
                       className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs"
                     >
-                      <option value="السعودية">السعودية</option>
-                      <option value="مصر">مصر</option>
-                      <option value="الإمارات">الإمارات</option>
-                      <option value="المغرب">المغرب</option>
-                      <option value="الكويت">الكويت</option>
-                      <option value="الأردن">الأردن</option>
+                      {!COUNTRIES.some((c) => c.name === formData.country) && (
+                        <option value={formData.country}>{formData.country}</option>
+                      )}
+                      {COUNTRIES.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 

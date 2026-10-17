@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./dark.css";
 
 @layer base {
   :root {
@@ -25,6 +26,11 @@
     touch-action: manipulation;
   }
 
+  html.dark body {
+    background-color: #0b1110;
+    color: #e3e9e7;
+  }
+
   :focus-visible {
     outline: 2px solid #059669;
     outline-offset: 2px;
@@ -48,4 +54,22 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #2b3735;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #3a4744;
+}
+
+/* الوضع الليلي: ظلال أخف، وصور أهدأ قليلاً */
+html.dark .shadow-sm,
+html.dark .shadow-xs {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+html.dark img {
+  filter: brightness(0.92);
 }

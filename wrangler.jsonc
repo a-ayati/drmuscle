@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "drmuscle",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  // تُبنى الواجهة تلقائياً قبل كل نشر (لا حاجة لضبط أمر البناء في Cloudflare)
+  "build": { "command": "npm run build" },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "drmuscle"
+      // بلا معرّف: تُنشئ Cloudflare قاعدة البيانات تلقائياً عند أول نشر، والخادم يجهّز الجداول بنفسه
+    }
+  ],
+  // تنظيف يومي للجلسات المنتهية
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": true }
+}

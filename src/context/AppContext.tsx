@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   UserProfile,
   Meal,
@@ -18,6 +18,36 @@ import {
   INITIAL_EXERCISES,
 } from '../data/initialData';
 import { audioCoach } from '../services/audioCoach';
+import { api, AuthUser } from '../lib/api';
+
+/** ما يُحفظ في حساب المستخدم على الخادم. */
+export interface SavedAppData {
+  version: 1;
+  userProfile: UserProfile;
+  nutritionDays: DayNutritionPlan[];
+  shoppingList: ShoppingItem[];
+  workoutSessions: DayWorkoutSession[];
+  weeklyReviews: WeeklyReview[];
+  settings: {
+    audioMode: 'full_guidance' | 'essential_beeps' | 'silent_visual';
+    defaultLocation: 'gym' | 'home';
+  };
+}
+
+export type SaveStatus = 'saved' | 'saving' | 'error';
+
+/** ملف شخصي لمستخدم جديد: نأخذ القيم الافتراضية المعقولة، ونفرغ البيانات الشخصية للمثال. */
+export function newUserProfile(name: string): UserProfile {
+  return {
+    ...DEFAULT_USER_PROFILE,
+    name,
+    country: 'قطر',
+    currency: 'ر.ق',
+    injuries: [],
+    dislikedFoods: [],
+    isCompleted: false,
+  };
+}
 
 interface AppContextType {
   // Navigation
@@ -99,57 +129,53 @@ interface AppContextType {
   // Admin View
   isAdminMode: boolean;
   setIsAdminMode: (admin: boolean) => void;
+
+  // Account & sync
+  user: AuthUser;
+  setUser: (user: AuthUser) => void;
+  logout: () => Promise<void>;
+  saveStatus: SaveStatus;
+  lastSavedAt: number | null;
+  exportData: () => SavedAppData;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface AppProviderProps {
+  children: React.ReactNode;
+  user: AuthUser;
+  initialData: Partial<SavedAppData> | null;
+  initialSavedAt: number | null;
+  onUserChange: (user: AuthUser) => void;
+  onLoggedOut: () => void;
+}
+
+export const AppProvider: React.FC<AppProviderProps> = ({
+  children,
+  user,
+  initialData,
+  initialSavedAt,
+  onUserChange,
+  onLoggedOut,
+}) => {
   // 1. Navigation state
   const [activeTab, setActiveTab] = useState<string>('today');
 
   // 2. User Profile state
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem('alaqaddak_user_profile');
-      return saved ? JSON.parse(saved) : DEFAULT_USER_PROFILE;
-    } catch {
-      return DEFAULT_USER_PROFILE;
-    }
-  });
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => initialData?.userProfile ?? newUserProfile(user.name));
 
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(() => initialData === null);
 
   // 3. Meals & Nutrition Days
   const [allMeals] = useState<Meal[]>(INITIAL_MEALS);
-  const [nutritionDays, setNutritionDays] = useState<DayNutritionPlan[]>(() => {
-    try {
-      const saved = localStorage.getItem('alaqaddak_nutrition_days');
-      return saved ? JSON.parse(saved) : INITIAL_NUTRITION_DAYS;
-    } catch {
-      return INITIAL_NUTRITION_DAYS;
-    }
-  });
+  const [nutritionDays, setNutritionDays] = useState<DayNutritionPlan[]>(() => initialData?.nutritionDays ?? INITIAL_NUTRITION_DAYS);
   const [selectedDayId, setSelectedDayId] = useState<string>('day_sun');
 
   // 4. Shopping list state
-  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('alaqaddak_shopping_list');
-      return saved ? JSON.parse(saved) : INITIAL_SHOPPING_LIST;
-    } catch {
-      return INITIAL_SHOPPING_LIST;
-    }
-  });
+  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>(() => initialData?.shoppingList ?? INITIAL_SHOPPING_LIST);
 
   // 5. Workout Program
-  const [workoutSessions, setWorkoutSessions] = useState<DayWorkoutSession[]>(() => {
-    try {
-      const saved = localStorage.getItem('alaqaddak_workouts');
-      return saved ? JSON.parse(saved) : INITIAL_WORKOUT_SESSIONS;
-    } catch {
-      return INITIAL_WORKOUT_SESSIONS;
-    }
-  });
+  const [workoutSessions, setWorkoutSessions] = useState<DayWorkoutSession[]>(() => initialData?.workoutSessions ?? INITIAL_WORKOUT_SESSIONS);
 
   const [activeWorkoutSession, setActiveWorkoutSession] = useState<DayWorkoutSession | null>(null);
   const [isLiveWorkoutModalOpen, setIsLiveWorkoutModalOpen] = useState<boolean>(false);
@@ -162,9 +188,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [timerActive, setTimerActive] = useState<boolean>(false);
   const [restTargetEndTimestamp, setRestTargetEndTimestamp] = useState<number | null>(null);
 
-  const [audioMode, setAudioMode] = useState<'full_guidance' | 'essential_beeps' | 'silent_visual'>('essential_beeps');
+  const [audioMode, setAudioMode] = useState<'full_guidance' | 'essential_beeps' | 'silent_visual'>(
+    () => initialData?.settings?.audioMode ?? 'essential_beeps'
+  );
   const [isExpressWorkout, setIsExpressWorkout] = useState<boolean>(false);
-  const [workoutLocation, setWorkoutLocation] = useState<'gym' | 'home'>('gym');
+  const [workoutLocation, setWorkoutLocation] = useState<'gym' | 'home'>(
+    () => initialData?.settings?.defaultLocation ?? initialData?.userProfile?.location ?? 'gym'
+  );
   const [workoutPainAlert, setWorkoutPainAlert] = useState<boolean>(false);
 
   // 6. Exercise Library
@@ -186,36 +216,87 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
 
   // 8. Reviews & Admin
-  const [weeklyReviews, setWeeklyReviews] = useState<WeeklyReview[]>(() => {
-    try {
-      const saved = localStorage.getItem('alaqaddak_reviews');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+  const [weeklyReviews, setWeeklyReviews] = useState<WeeklyReview[]>(() => initialData?.weeklyReviews ?? []);
+  const [isAdminModeRaw, setIsAdminMode] = useState<boolean>(false);
+  const isAdminMode = user.isAdmin && isAdminModeRaw;
+
+  // حفظ تلقائي في حساب المستخدم على الخادم (بعد ثانية من آخر تغيير)
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(initialSavedAt);
+
+  const exportData = useCallback(
+    (): SavedAppData => ({
+      version: 1,
+      userProfile,
+      nutritionDays,
+      shoppingList,
+      workoutSessions,
+      weeklyReviews,
+      settings: { audioMode, defaultLocation: workoutLocation },
+    }),
+    [userProfile, nutritionDays, shoppingList, workoutSessions, weeklyReviews, audioMode, workoutLocation]
+  );
+
+  const latestDataRef = useRef<SavedAppData>(exportData());
+  const dirtyRef = useRef(false);
+  const firstRenderRef = useRef(true);
+
+  useEffect(() => {
+    latestDataRef.current = exportData();
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      // مستخدم جديد بلا بيانات محفوظة: نحفظ خطته الأولى فوراً
+      if (initialData) return;
     }
-  });
-  const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
+    dirtyRef.current = true;
+    setSaveStatus('saving');
+    const timer = window.setTimeout(async () => {
+      dirtyRef.current = false;
+      try {
+        const res = await api.putState(latestDataRef.current as unknown as Record<string, unknown>);
+        if (!dirtyRef.current) setSaveStatus('saved');
+        setLastSavedAt(res.updatedAt);
+      } catch {
+        dirtyRef.current = true;
+        setSaveStatus('error');
+      }
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [exportData, initialData]);
 
-  // Save changes to localStorage
+  // إذا أُغلقت الصفحة قبل الحفظ، نرسل آخر نسخة
   useEffect(() => {
-    localStorage.setItem('alaqaddak_user_profile', JSON.stringify(userProfile));
-  }, [userProfile]);
+    const flush = () => {
+      if (dirtyRef.current) {
+        api.putState(latestDataRef.current as unknown as Record<string, unknown>, true).catch(() => {});
+        dirtyRef.current = false;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
-  useEffect(() => {
-    localStorage.setItem('alaqaddak_nutrition_days', JSON.stringify(nutritionDays));
-  }, [nutritionDays]);
-
-  useEffect(() => {
-    localStorage.setItem('alaqaddak_shopping_list', JSON.stringify(shoppingList));
-  }, [shoppingList]);
-
-  useEffect(() => {
-    localStorage.setItem('alaqaddak_workouts', JSON.stringify(workoutSessions));
-  }, [workoutSessions]);
-
-  useEffect(() => {
-    localStorage.setItem('alaqaddak_reviews', JSON.stringify(weeklyReviews));
-  }, [weeklyReviews]);
+  const logout = useCallback(async () => {
+    if (dirtyRef.current) {
+      try {
+        await api.putState(latestDataRef.current as unknown as Record<string, unknown>);
+      } catch {
+        // نكمل الخروج
+      }
+    }
+    try {
+      await api.logout();
+    } finally {
+      onLoggedOut();
+    }
+  }, [onLoggedOut]);
 
   // Profile update
   const updateUserProfile = useCallback((updates: Partial<UserProfile>) => {
@@ -513,7 +594,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         actionProposal = {
           type: 'swap_meal' as const,
           title: 'استبدال الغداء بمجدرة العدس والأرز البني',
-          description: 'يوفر 4.0 ر.س لكل وجبة مع ضمان 21 جم بروتين وألياف عالية.',
+          description: `يوفر 4.0 ${userProfile.currency} لكل وجبة مع ضمان 21 جم بروتين وألياف عالية.`,
           data: { dayId: selectedDayId, category: 'lunch', newMealId: 'meal_lentil_rice_bowl' },
         };
       } else if (content.includes('ركبتي') || content.includes('بديل للسكوات') || content.includes('بديل للرجل')) {
@@ -566,13 +647,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const resetAllData = useCallback(() => {
-    localStorage.clear();
-    setUserProfile(DEFAULT_USER_PROFILE);
+    setUserProfile(newUserProfile(user.name));
     setNutritionDays(INITIAL_NUTRITION_DAYS);
     setShoppingList(INITIAL_SHOPPING_LIST);
     setWorkoutSessions(INITIAL_WORKOUT_SESSIONS);
     setWeeklyReviews([]);
-  }, []);
+    setActiveTab('today');
+    setIsOnboardingOpen(true);
+  }, [user.name]);
 
   return (
     <AppContext.Provider
@@ -645,6 +727,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         isAdminMode,
         setIsAdminMode,
+
+        user,
+        setUser: onUserChange,
+        logout,
+        saveStatus,
+        lastSavedAt,
+        exportData,
       }}
     >
       {children}

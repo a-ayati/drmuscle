@@ -1,9 +1,9 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Dumbbell, User, ShieldCheck } from 'lucide-react';
+import { Dumbbell, Settings, ShieldCheck } from 'lucide-react';
 
 export const Header: React.FC = () => {
-  const { activeTab, setActiveTab, startLiveWorkout, setIsOnboardingOpen, isAdminMode, setIsAdminMode } = useApp();
+  const { activeTab, setActiveTab, startLiveWorkout, isAdminMode, setIsAdminMode, user } = useApp();
 
   const navItems = [
     { id: 'today', label: 'اليوم' },
@@ -16,7 +16,7 @@ export const Header: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-30 w-full bg-[#fbfbf9]/95 backdrop-blur-md border-b border-slate-200/80">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 lg:gap-8">
         
         {/* Zone 1: Single text element Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
@@ -32,7 +32,7 @@ export const Header: React.FC = () => {
               <span className="text-xl font-extrabold tracking-tight text-slate-900 block leading-tight">
                 على قدّك
               </span>
-              <span className="text-[11px] font-medium text-emerald-700 block leading-tight">
+              <span className="text-[11px] font-medium text-emerald-700 hidden sm:block leading-tight">
                 غذاؤك حسب ميزانيتك، وتمرينك حسب مستواك
               </span>
             </div>
@@ -61,6 +61,7 @@ export const Header: React.FC = () => {
 
         {/* Zone 3: Primary Action & Profile Control */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {user.isAdmin && (
           <button
             onClick={() => setIsAdminMode(!isAdminMode)}
             className={`p-2 rounded-lg text-xs font-medium border transition-colors hidden sm:flex items-center gap-1.5 ${
@@ -73,14 +74,22 @@ export const Header: React.FC = () => {
             <ShieldCheck className="w-4 h-4" />
             <span className="hidden xl:inline">{isAdminMode ? 'الإدارة (نشط)' : 'لوحة الإدارة'}</span>
           </button>
+          )}
 
           <button
-            onClick={() => setIsOnboardingOpen(true)}
-            className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-            title="تعديل الملف الشخصي والميزانية"
-            aria-label="تعديل الملف الشخصي"
+            onClick={() => {
+              setIsAdminMode(false);
+              setActiveTab('settings');
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              activeTab === 'settings' && !isAdminMode
+                ? 'text-emerald-700 bg-emerald-50'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+            title="الإعدادات"
+            aria-label="الإعدادات"
           >
-            <User className="w-5 h-5" />
+            <Settings className="w-5 h-5" />
           </button>
 
           <button
