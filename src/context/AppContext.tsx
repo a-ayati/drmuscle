@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   UserProfile,
   Meal,
@@ -8,29 +8,67 @@ import {
   ExerciseItem,
   ChatMessage,
   WeeklyReview,
+  AppNotification,
+  LocationPreference,
 } from '../types';
+import { DEFAULT_USER_PROFILE } from '../data/initialData';
 import {
-  DEFAULT_USER_PROFILE,
-  INITIAL_MEALS,
-  INITIAL_NUTRITION_DAYS,
-  INITIAL_WORKOUT_SESSIONS,
-  INITIAL_SHOPPING_LIST,
-  INITIAL_EXERCISES,
-} from '../data/initialData';
+  COUNTRIES,
+  CountryCode,
+  countryByName,
+  mealsFor,
+  refreshPlan,
+  defaultWeekPlan,
+  buildShoppingList,
+  ShoppingStatus,
+  suggestedWeeklyBudget,
+  money as formatMoney,
+  MealSlot,
+  SLOT_LABELS,
+  PRICES_CHECKED_AT,
+  pantryFriendlyMealId,
+  dayTotals,
+} from '../data/food';
+import { ALL_EXERCISES, buildWeeklyWorkouts, mergeWorkoutProgress, LOCATION_LABELS, WEEKDAYS } from '../data/workouts';
 import { audioCoach } from '../services/audioCoach';
 import { api, AuthUser } from '../lib/api';
 
 /** ما يُحفظ في حساب المستخدم على الخادم. */
 export interface SavedAppData {
-  version: 1;
+  version: 2;
   userProfile: UserProfile;
   nutritionDays: DayNutritionPlan[];
-  shoppingList: ShoppingItem[];
+  /** حالة كل صنف في قائمة المشتريات (اشتريته، عندي في المطبخ، السعر الفعلي). القائمة نفسها تُبنى من الخطة. */
+  shoppingStatus: Record<string, ShoppingStatus>;
   workoutSessions: DayWorkoutSession[];
   weeklyReviews: WeeklyReview[];
+  notifications: AppNotification[];
   settings: {
     audioMode: 'full_guidance' | 'essential_beeps' | 'silent_visual';
-    defaultLocation: 'gym' | 'home';
+    pricesSeen?: string;
+    lastDailyNotice?: string;
+    /** بداية الأسبوع (الأحد) الذي تخصّه الحصص المنجزة والمشتريات */
+    weekKey?: string;
+  };
+}
+
+const MAX_NOTIFICATIONS = 300;
+const VALID_LOCATIONS: LocationPreference[] = ['gym', 'home', 'run', 'walk'];
+const localDateKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const weekStartKey = (d = new Date()) => localDateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay()));
+
+/** يصحح ملفاً محفوظاً قديماً: دولة غير مدعومة، أو مكان تمرين غير معروف. */
+function migrateProfile(p: UserProfile): UserProfile {
+  const supported = COUNTRIES.some((c) => c.name === p.country);
+  const c = countryByName(p.country);
+  return {
+    ...p,
+    country: c.name,
+    currency: c.currency,
+    foodBudgetWeekly: supported ? p.foodBudgetWeekly : suggestedWeeklyBudget(c.code, p.budgetPersons || 1),
+    location: VALID_LOCATIONS.includes(p.location) ? p.location : 'gym',
+    workoutDaysPerWeek: Math.min(6, Math.max(2, p.workoutDaysPerWeek || 3)),
   };
 }
 
@@ -43,6 +81,9 @@ export function newUserProfile(name: string): UserProfile {
     name,
     country: 'قطر',
     currency: 'ر.ق',
+    foodBudgetWeekly: suggestedWeeklyBudget('QA'),
+    workoutDaysPerWeek: 3,
+    location: 'gym',
     injuries: [],
     dislikedFoods: [],
     isCompleted: false,
@@ -66,10 +107,21 @@ interface AppContextType {
   nutritionDays: DayNutritionPlan[];
   selectedDayId: string;
   setSelectedDayId: (id: string) => void;
-  swapMeal: (dayId: string, category: 'breakfast' | 'lunch' | 'dinner', newMealId: string) => void;
-  swapToCheaper: (dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => void;
-  swapToFaster: (dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => void;
-  usePantryAlternative: (dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => void;
+  swapMeal: (dayId: string, category: MealSlot, newMealId: string) => void;
+  swapToCheaper: (dayId: string, category: MealSlot) => void;
+  swapToFaster: (dayId: string, category: MealSlot) => void;
+  usePantryAlternative: (dayId: string, category: MealSlot) => void;
+
+  // الدولة والعملة
+  countryCode: CountryCode;
+  money: (n: number) => string;
+  setCountry: (countryName: string) => void;
+
+  // اليوم
+  todayIndex: number;
+  todayDayPlan: DayNutritionPlan | undefined;
+  todayWorkout: DayWorkoutSession | null;
+  nextWorkout: DayWorkoutSession | null;
 
   // Shopping & Budget
   shoppingList: ShoppingItem[];
@@ -79,6 +131,7 @@ interface AppContextType {
   totalEstimatedGroceries: number;
   totalActualGroceries: number;
   remainingBudget: number;
+  overBudget: number;
 
   // Workout Program
   workoutSessions: DayWorkoutSession[];
@@ -99,8 +152,9 @@ interface AppContextType {
   setAudioMode: (mode: 'full_guidance' | 'essential_beeps' | 'silent_visual') => void;
   isExpressWorkout: boolean;
   toggleExpressWorkout: () => void;
-  workoutLocation: 'gym' | 'home';
-  toggleWorkoutLocation: () => void;
+  workoutLocation: LocationPreference;
+  setWorkoutLocation: (loc: LocationPreference) => void;
+  setWorkoutDays: (days: number) => void;
   finishCurrentSet: (weight: number, reps: number, difficulty: 'easy' | 'moderate' | 'hard' | 'pain') => void;
   skipRestTimer: () => void;
   adjustRestTimer: (deltaSeconds: number) => void;
@@ -129,6 +183,13 @@ interface AppContextType {
   // Admin View
   isAdminMode: boolean;
   setIsAdminMode: (admin: boolean) => void;
+
+  // الإشعارات
+  notifications: AppNotification[];
+  unreadCount: number;
+  notify: (kind: AppNotification['kind'], title: string, body: string) => void;
+  markAllNotificationsRead: () => void;
+  completeOnboarding: (profile: UserProfile) => void;
 
   // Account & sync
   user: AuthUser;
@@ -162,20 +223,60 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [activeTab, setActiveTab] = useState<string>('today');
 
   // 2. User Profile state
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => initialData?.userProfile ?? newUserProfile(user.name));
+  const [userProfile, setUserProfile] = useState<UserProfile>(() =>
+    initialData?.userProfile ? migrateProfile(initialData.userProfile) : newUserProfile(user.name)
+  );
+  const countryCode: CountryCode = countryByName(userProfile.country).code;
+  const money = useCallback((n: number) => formatMoney(n, countryCode), [countryCode]);
 
   const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(() => initialData === null);
 
   // 3. Meals & Nutrition Days
-  const [allMeals] = useState<Meal[]>(INITIAL_MEALS);
-  const [nutritionDays, setNutritionDays] = useState<DayNutritionPlan[]>(() => initialData?.nutritionDays ?? INITIAL_NUTRITION_DAYS);
-  const [selectedDayId, setSelectedDayId] = useState<string>('day_sun');
+  const allMeals: Meal[] = useMemo(() => mealsFor(countryCode), [countryCode]);
+  const [nutritionDays, setNutritionDays] = useState<DayNutritionPlan[]>(() =>
+    refreshPlan(initialData?.nutritionDays, countryCode)
+  );
+  const todayIndex = new Date().getDay();
+  const [selectedDayId, setSelectedDayId] = useState<string>(() => defaultWeekPlan('QA')[todayIndex].dayId);
 
-  // 4. Shopping list state
-  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>(() => initialData?.shoppingList ?? INITIAL_SHOPPING_LIST);
+  // عند تغيير الدولة: نفس الوجبات بأسعار الدولة الجديدة
+  const countryRef = useRef(countryCode);
+  useEffect(() => {
+    if (countryRef.current === countryCode) return;
+    countryRef.current = countryCode;
+    setNutritionDays((prev) => refreshPlan(prev, countryCode));
+    setShoppingStatus((prev) =>
+      Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, actualPrice: undefined }]))
+    );
+  }, [countryCode]);
 
-  // 5. Workout Program
-  const [workoutSessions, setWorkoutSessions] = useState<DayWorkoutSession[]>(() => initialData?.workoutSessions ?? INITIAL_WORKOUT_SESSIONS);
+  // 4. قائمة المشتريات: تُبنى من وجبات الأسبوع، وتُحفظ فقط حالة كل صنف
+  const [shoppingStatus, setShoppingStatus] = useState<Record<string, ShoppingStatus>>(
+    () => initialData?.shoppingStatus ?? {}
+  );
+  const shoppingList: ShoppingItem[] = useMemo(
+    () => buildShoppingList(nutritionDays, userProfile.budgetPersons || 1, shoppingStatus, countryCode),
+    [nutritionDays, userProfile.budgetPersons, shoppingStatus, countryCode]
+  );
+
+  // 5. برنامج التمرين: يُبنى من مكان التمرين وعدد الأيام، ويحتفظ بما أنجزه المستخدم
+  const workoutLocation: LocationPreference = userProfile.location;
+  const [workoutSessions, setWorkoutSessions] = useState<DayWorkoutSession[]>(() =>
+    mergeWorkoutProgress(
+      buildWeeklyWorkouts(userProfile.location, userProfile.workoutDaysPerWeek),
+      initialData?.workoutSessions
+    )
+  );
+  useEffect(() => {
+    setWorkoutSessions((prev) =>
+      mergeWorkoutProgress(buildWeeklyWorkouts(userProfile.location, userProfile.workoutDaysPerWeek), prev)
+    );
+  }, [userProfile.location, userProfile.workoutDaysPerWeek]);
+
+  const todayWorkout = workoutSessions.find((w) => w.weekdayIndex === todayIndex) ?? null;
+  const nextWorkout =
+    workoutSessions.find((w) => (w.weekdayIndex ?? 0) > todayIndex) ?? workoutSessions[0] ?? null;
+  const todayDayPlan = nutritionDays[todayIndex];
 
   const [activeWorkoutSession, setActiveWorkoutSession] = useState<DayWorkoutSession | null>(null);
   const [isLiveWorkoutModalOpen, setIsLiveWorkoutModalOpen] = useState<boolean>(false);
@@ -192,13 +293,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     () => initialData?.settings?.audioMode ?? 'essential_beeps'
   );
   const [isExpressWorkout, setIsExpressWorkout] = useState<boolean>(false);
-  const [workoutLocation, setWorkoutLocation] = useState<'gym' | 'home'>(
-    () => initialData?.settings?.defaultLocation ?? initialData?.userProfile?.location ?? 'gym'
-  );
   const [workoutPainAlert, setWorkoutPainAlert] = useState<boolean>(false);
 
   // 6. Exercise Library
-  const [exerciseLibrary] = useState<ExerciseItem[]>(INITIAL_EXERCISES);
+  const exerciseLibrary: ExerciseItem[] = ALL_EXERCISES;
   const [selectedExercise, setSelectedExercise] = useState<ExerciseItem | null>(null);
 
   // 7. Chat Assistant
@@ -207,8 +305,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       {
         id: 'msg_init',
         role: 'assistant',
-        content: `أهلاً بك يا ${userProfile.name}! أنا «كابتن على قدّك». خطتك جاهزة لتناسب ميزانيتك الأسبوعية (${userProfile.foodBudgetWeekly} ${userProfile.currency}) ومستواك الرياضي. هل لديك أي استفسار حول وجبات اليوم أو تمارين الصالة؟`,
-        timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+        content: `أهلاً بك يا ${userProfile.name}! أنا «كابتن على قدّك». خطتك مبنية على ميزانيتك الأسبوعية (${formatMoney(userProfile.foodBudgetWeekly, countryByName(userProfile.country).code)}) ومستواك. اسألني عن أي وجبة أو تمرين.`,
+        timestamp: new Date().toLocaleTimeString('ar-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
       },
     ];
   });
@@ -220,21 +318,85 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [isAdminModeRaw, setIsAdminMode] = useState<boolean>(false);
   const isAdminMode = user.isAdmin && isAdminModeRaw;
 
+  // 9. الإشعارات: أرشيف دائم لكل ما يحدث في الحساب
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => initialData?.notifications ?? []);
+  const [noticeSettings, setNoticeSettings] = useState<{ pricesSeen?: string; lastDailyNotice?: string; weekKey?: string }>(() => ({
+    pricesSeen: initialData?.settings?.pricesSeen,
+    lastDailyNotice: initialData?.settings?.lastDailyNotice,
+    weekKey: initialData?.settings?.weekKey ?? weekStartKey(),
+  }));
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const notify = useCallback((kind: AppNotification['kind'], title: string, body: string) => {
+    setNotifications((prev) =>
+      [
+        { id: `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, kind, title, body, createdAt: Date.now(), read: false },
+        ...prev,
+      ].slice(0, MAX_NOTIFICATIONS)
+    );
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications((prev) => (prev.some((n) => !n.read) ? prev.map((n) => ({ ...n, read: true })) : prev));
+  }, []);
+
+  // ترحيب الحساب الجديد، وتنبيه تحديث الأسعار، وخطة اليوم (مرة واحدة يومياً)
+  const startupNoticesDone = useRef(false);
+  useEffect(() => {
+    if (startupNoticesDone.current) return;
+    startupNoticesDone.current = true;
+    const today = localDateKey();
+    const updates: { pricesSeen?: string; lastDailyNotice?: string; weekKey?: string } = {};
+    // أسبوع جديد: نبدأ الحصص والمشتريات من الصفر، ونُبقي ما علّمه «عندي في المطبخ»
+    const thisWeek = weekStartKey();
+    if (initialData && noticeSettings.weekKey !== thisWeek) {
+      const doneLastWeek = workoutSessions.filter((w) => w.isCompleted).length;
+      setWorkoutSessions(buildWeeklyWorkouts(userProfile.location, userProfile.workoutDaysPerWeek));
+      setShoppingStatus((prev) => Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { inPantry: v.inPantry }])));
+      notify('info', 'بدأ أسبوع جديد', `أنجزت الأسبوع الماضي ${doneLastWeek} من ${workoutSessions.length} حصص. صفّرنا الحصص وقائمة المشتريات لهذا الأسبوع.`);
+      updates.weekKey = thisWeek;
+    }
+    if (!initialData) {
+      notify('success', `أهلاً بك يا ${user.name}`, 'هذا مكان إشعاراتك: خطة كل يوم، وتنبيهات الميزانية، وما تنجزه من حصص. كلها محفوظة هنا.');
+      updates.pricesSeen = PRICES_CHECKED_AT;
+    } else if (noticeSettings.pricesSeen !== PRICES_CHECKED_AT) {
+      notify('budget', 'تحدّثت الأسعار', `أسعار المكونات الآن من متاجر ${userProfile.country} بتاريخ ${PRICES_CHECKED_AT}، وتحدّثت معها تكلفة الوجبات وقائمة المشتريات.`);
+      updates.pricesSeen = PRICES_CHECKED_AT;
+    }
+    if (!initialData) {
+      // حساب جديد: خطة اليوم تأتي في إشعار «خطتك جاهزة» بعد تعبئة الملف، لا قبلها
+      updates.lastDailyNotice = today;
+    } else if (noticeSettings.lastDailyNotice !== today) {
+      const t = dayTotals(nutritionDays[todayIndex]);
+      const w = workoutSessions.find((x) => x.weekdayIndex === todayIndex);
+      notify(
+        'workout',
+        `خطة اليوم · ${WEEKDAYS[todayIndex]}`,
+        (w ? `حصة اليوم: ${w.title} (نحو ${w.estimatedMinutes} دقيقة). ` : 'اليوم يوم راحة من التمرين، والمشي الخفيف مفيد. ') +
+          `أكل اليوم: ${t.calories} سعرة و${t.protein} جم بروتين بتكلفة ${formatMoney(t.cost, countryCode)} تقريباً.`
+      );
+      updates.lastDailyNotice = today;
+    }
+    setNoticeSettings((prev) => ({ ...prev, ...updates }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // حفظ تلقائي في حساب المستخدم على الخادم (بعد ثانية من آخر تغيير)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(initialSavedAt);
 
   const exportData = useCallback(
     (): SavedAppData => ({
-      version: 1,
+      version: 2,
       userProfile,
       nutritionDays,
-      shoppingList,
+      shoppingStatus,
       workoutSessions,
       weeklyReviews,
-      settings: { audioMode, defaultLocation: workoutLocation },
+      notifications,
+      settings: { audioMode, ...noticeSettings },
     }),
-    [userProfile, nutritionDays, shoppingList, workoutSessions, weeklyReviews, audioMode, workoutLocation]
+    [userProfile, nutritionDays, shoppingStatus, workoutSessions, weeklyReviews, notifications, audioMode, noticeSettings]
   );
 
   const latestDataRef = useRef<SavedAppData>(exportData());
@@ -303,83 +465,63 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setUserProfile((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  // Meal swapping helper
-  const swapMeal = useCallback((dayId: string, category: 'breakfast' | 'lunch' | 'dinner', newMealId: string) => {
+  // تبديل وجبة: قائمة المشتريات والميزانية تتحدث تلقائياً لأنها مبنية من الخطة
+  const swapMeal = useCallback((dayId: string, category: MealSlot, newMealId: string) => {
     const targetMeal = allMeals.find((m) => m.id === newMealId);
     if (!targetMeal) return;
+    const day = nutritionDays.find((d) => d.dayId === dayId);
+    const oldMeal = day?.meals[category];
+    if (oldMeal?.id === newMealId) return;
 
     setNutritionDays((prev) =>
-      prev.map((d) => {
-        if (d.dayId !== dayId) return d;
-        return {
-          ...d,
-          meals: {
-            ...d.meals,
-            [category]: targetMeal,
-          },
-        };
-      })
+      prev.map((d) => (d.dayId === dayId ? { ...d, meals: { ...d.meals, [category]: targetMeal } } : d))
     );
 
-    // Dynamic adjustment of shopping list when swapped
-    setShoppingList((prev) => {
-      return prev.map((item) => {
-        if (item.name.includes('تونة') && newMealId === 'meal_lentil_rice_bowl') {
-          return { ...item, recipeQty: 'علبتان بدلاً من 4' };
-        }
-        if (item.name.includes('عدس') && newMealId === 'meal_lentil_rice_bowl') {
-          return { ...item, recipeQty: '400 جم للأسبوع (تمت الزيادة)' };
-        }
-        return item;
-      });
-    });
-  }, [allMeals]);
-
-  const swapToCheaper = useCallback((dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => {
-    const currentDay = nutritionDays.find((d) => d.dayId === dayId);
-    if (!currentDay) return;
-    const currentMeal = currentDay.meals[category];
-    if (currentMeal && currentMeal.cheaperAlternativeId) {
-      swapMeal(dayId, category, currentMeal.cheaperAlternativeId);
+    if (day && oldMeal) {
+      const diff = targetMeal.estimatedPortionCost - oldMeal.estimatedPortionCost;
+      const diffText =
+        Math.abs(diff) < 0.0005 ? 'بنفس التكلفة تقريباً' : diff < 0 ? `ووفّرت ${formatMoney(-diff, countryCode)}` : `بزيادة ${formatMoney(diff, countryCode)}`;
+      notify('meal', `تبديل ${SLOT_LABELS[category]} · ${day.dayName}`, `«${targetMeal.arabicName}» بدلاً من «${oldMeal.arabicName}»، ${diffText}. تحدّثت قائمة المشتريات.`);
     }
+  }, [allMeals, nutritionDays, notify, countryCode]);
+
+  const swapToCheaper = useCallback((dayId: string, category: MealSlot) => {
+    const currentMeal = nutritionDays.find((d) => d.dayId === dayId)?.meals[category];
+    if (currentMeal?.cheaperAlternativeId) swapMeal(dayId, category, currentMeal.cheaperAlternativeId);
   }, [nutritionDays, swapMeal]);
 
-  const swapToFaster = useCallback((dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => {
-    const currentDay = nutritionDays.find((d) => d.dayId === dayId);
-    if (!currentDay) return;
-    const currentMeal = currentDay.meals[category];
-    if (currentMeal && currentMeal.fasterAlternativeId) {
-      swapMeal(dayId, category, currentMeal.fasterAlternativeId);
-    }
+  const swapToFaster = useCallback((dayId: string, category: MealSlot) => {
+    const currentMeal = nutritionDays.find((d) => d.dayId === dayId)?.meals[category];
+    if (currentMeal?.fasterAlternativeId) swapMeal(dayId, category, currentMeal.fasterAlternativeId);
   }, [nutritionDays, swapMeal]);
 
-  const usePantryAlternative = useCallback((dayId: string, category: 'breakfast' | 'lunch' | 'dinner') => {
-    // If lunch, swap to Mujadara which relies strictly on home pantry ingredients
-    if (category === 'lunch') {
-      swapMeal(dayId, category, 'meal_lentil_rice_bowl');
-    } else if (category === 'breakfast') {
-      swapMeal(dayId, category, 'meal_shakshuka_budget');
-    }
-  }, [swapMeal]);
+  /** وجبة تعتمد أكثر على مؤن البيت (عدس، أرز، شوفان، بيض…) بدل الطازج. */
+  const usePantryAlternative = useCallback((dayId: string, category: MealSlot) => {
+    const currentMeal = nutritionDays.find((d) => d.dayId === dayId)?.meals[category];
+    const id = currentMeal ? pantryFriendlyMealId(currentMeal.category, currentMeal.id) : undefined;
+    if (id) swapMeal(dayId, category, id);
+  }, [nutritionDays, swapMeal]);
 
   // Shopping list toggles & calculations
-  const toggleShoppingItem = useCallback((id: string) => {
-    setShoppingList((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, isPurchased: !item.isPurchased } : item))
-    );
+  const patchStatus = useCallback((id: string, patch: (st: ShoppingStatus) => ShoppingStatus) => {
+    setShoppingStatus((prev) => ({ ...prev, [id]: patch(prev[id] || {}) }));
   }, []);
 
-  const updateActualPrice = useCallback((id: string, price: number) => {
-    setShoppingList((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, actualPrice: price } : item))
-    );
-  }, []);
+  const toggleShoppingItem = useCallback(
+    (id: string) => patchStatus(id, (st) => ({ ...st, isPurchased: !st.isPurchased })),
+    [patchStatus]
+  );
 
-  const togglePantryItem = useCallback((id: string) => {
-    setShoppingList((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, inPantry: !item.inPantry } : item))
-    );
-  }, []);
+  const updateActualPrice = useCallback(
+    (id: string, price: number) =>
+      patchStatus(id, (st) => ({ ...st, actualPrice: Number.isFinite(price) && price >= 0 ? price : undefined })),
+    [patchStatus]
+  );
+
+  const togglePantryItem = useCallback(
+    (id: string) => patchStatus(id, (st) => ({ ...st, inPantry: !st.inPantry })),
+    [patchStatus]
+  );
 
   const totalEstimatedGroceries = shoppingList
     .filter((i) => !i.inPantry)
@@ -390,6 +532,35 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     .reduce((acc, curr) => acc + (curr.actualPrice !== undefined ? curr.actualPrice : curr.estimatedPrice), 0);
 
   const remainingBudget = Math.max(0, userProfile.foodBudgetWeekly - totalActualGroceries);
+  const overBudget = Math.max(0, totalActualGroceries - userProfile.foodBudgetWeekly);
+
+  // تنبيه عند تجاوز الميزانية، وعند إكمال المشتريات (مرة واحدة لكل تغيّر في الحالة)
+  const overRef = useRef(overBudget > 0);
+  useEffect(() => {
+    const isOver = overBudget > 0;
+    if (isOver && !overRef.current) {
+      notify('budget', 'تجاوزت ميزانية الأسبوع', `مشترياتك المتوقعة أكثر من ميزانيتك بـ ${formatMoney(overBudget, countryCode)}. جرّب زر «أرخص» في صفحة الغذاء، أو علّم ما عندك في المطبخ.`);
+    }
+    overRef.current = isOver;
+  }, [overBudget, notify, countryCode]);
+
+  const allBought = shoppingList.length > 0 && shoppingList.every((i) => i.isPurchased || i.inPantry);
+  const boughtRef = useRef(allBought);
+  useEffect(() => {
+    if (allBought && !boughtRef.current) {
+      notify('success', 'أكملت مشتريات الأسبوع', `المصروف: ${formatMoney(totalActualGroceries, countryCode)} من ميزانية ${formatMoney(userProfile.foodBudgetWeekly, countryCode)}.`);
+    }
+    boughtRef.current = allBought;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBought]);
+
+  const setCountry = useCallback((countryName: string) => {
+    const c = countryByName(countryName);
+    if (c.name === userProfile.country) return;
+    const budget = suggestedWeeklyBudget(c.code, userProfile.budgetPersons || 1);
+    setUserProfile((prev) => ({ ...prev, country: c.name, currency: c.currency, foodBudgetWeekly: budget }));
+    notify('budget', `الأسعار الآن من ${c.name}`, `تحدّثت أسعار الوجبات وقائمة المشتريات بعملة ${c.currency}، واقترحنا ميزانية أسبوعية ${formatMoney(budget, c.code)} يمكنك تعديلها من الإعدادات.`);
+  }, [userProfile.country, userProfile.budgetPersons, notify]);
 
   // Live Workout Management
   const startLiveWorkout = useCallback((sessionId?: string) => {
@@ -419,9 +590,18 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setIsExpressWorkout((prev) => !prev);
   }, []);
 
-  const toggleWorkoutLocation = useCallback(() => {
-    setWorkoutLocation((prev) => (prev === 'gym' ? 'home' : 'gym'));
-  }, []);
+  const setWorkoutLocation = useCallback((loc: LocationPreference) => {
+    if (loc === userProfile.location) return;
+    setUserProfile((prev) => ({ ...prev, location: loc }));
+    notify('workout', `برنامجك الآن: ${LOCATION_LABELS[loc]}`, `بنينا لك ${userProfile.workoutDaysPerWeek} حصص أسبوعياً مناسبة لـ${LOCATION_LABELS[loc]}، ووزّعناها على أيام الأسبوع مع أيام راحة.`);
+  }, [userProfile.location, userProfile.workoutDaysPerWeek, notify]);
+
+  const setWorkoutDays = useCallback((days: number) => {
+    const d = Math.min(6, Math.max(2, days));
+    if (d === userProfile.workoutDaysPerWeek) return;
+    setUserProfile((prev) => ({ ...prev, workoutDaysPerWeek: d }));
+    notify('workout', `${d} أيام تمرين أسبوعياً`, `تحدّث جدول تمرينك في صفحة التمارين.`);
+  }, [userProfile.workoutDaysPerWeek, notify]);
 
   // Set completion in live workout
   const finishCurrentSet = useCallback((weight: number, reps: number, difficulty: 'easy' | 'moderate' | 'hard' | 'pain') => {
@@ -429,6 +609,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
     if (difficulty === 'pain') {
       setWorkoutPainAlert(true);
+      notify('warning', 'سجّلت ألماً أثناء التمرين', 'إذا كان الألم حاداً أو استمر، توقف عن التمرين وراجع طبيباً. يمكنك استبدال التمرين ببديل أخف من دليل الأجهزة.');
       audioCoach.speak('تنبيه أمان: توقف فوراً عند الشعور بألم غير طبيعي، وافحص المفصل أو استشر طبيباً.', audioMode);
     }
 
@@ -485,7 +666,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         audioCoach.speak('ألف مبروك! أنهيت حصتك الرياضية بنجاح واقتدار. استمر في هذا الالتزام!', audioMode);
       }
     }
-  }, [activeWorkoutSession, currentExerciseIndex, currentSetIndex, audioMode, exerciseLibrary]);
+  }, [activeWorkoutSession, currentExerciseIndex, currentSetIndex, audioMode, exerciseLibrary, notify]);
 
   // Robust Wall-clock timer loop using Date.now() so background tabs never desync
   useEffect(() => {
@@ -547,9 +728,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       setWorkoutSessions((prev) =>
         prev.map((s) => (s.id === activeWorkoutSession.id ? { ...activeWorkoutSession, isCompleted: true } : s))
       );
+      const done = workoutSessions.filter((s) => s.isCompleted || s.id === activeWorkoutSession.id).length;
+      notify('success', `أنهيت حصة: ${activeWorkoutSession.title}`, `أحسنت! أنجزت ${done} من ${workoutSessions.length} حصص هذا الأسبوع.`);
     }
     closeLiveWorkout();
-  }, [activeWorkoutSession, closeLiveWorkout]);
+  }, [activeWorkoutSession, closeLiveWorkout, workoutSessions, notify]);
 
   const clearPainAlert = useCallback(() => {
     setWorkoutPainAlert(false);
@@ -563,7 +746,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       id: `msg_u_${Date.now()}`,
       role: 'user',
       content,
-      timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toLocaleTimeString('ar-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
     };
 
     setChatMessages((prev) => [...prev, userMsg]);
@@ -578,7 +761,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({
           userContext: {
             name: userProfile.name,
             goal: userProfile.goal,
-            budget: `${userProfile.foodBudgetWeekly} ${userProfile.currency}`,
+            budget: formatMoney(userProfile.foodBudgetWeekly, countryCode),
+            country: userProfile.country,
+            workoutLocation: LOCATION_LABELS[userProfile.location],
             injuries: userProfile.injuries,
             experience: userProfile.experienceLevel,
             currentExercise: activeWorkoutSession?.exercises[currentExerciseIndex]?.exerciseId,
@@ -590,19 +775,21 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
       let actionProposal = undefined;
       // If user asks about swapping a meal to cheaper, offer direct action button
-      if (content.includes('أرخص') || content.includes('بديل للغداء') || content.includes('عدس')) {
+      const currentLunch = nutritionDays.find((d) => d.dayId === selectedDayId)?.meals.lunch;
+      const cheaperLunch = currentLunch?.cheaperAlternativeId ? allMeals.find((m) => m.id === currentLunch.cheaperAlternativeId) : undefined;
+      if ((content.includes('أرخص') || content.includes('بديل للغداء') || content.includes('ميزانية')) && currentLunch && cheaperLunch) {
         actionProposal = {
           type: 'swap_meal' as const,
-          title: 'استبدال الغداء بمجدرة العدس والأرز البني',
-          description: `يوفر 4.0 ${userProfile.currency} لكل وجبة مع ضمان 21 جم بروتين وألياف عالية.`,
-          data: { dayId: selectedDayId, category: 'lunch', newMealId: 'meal_lentil_rice_bowl' },
+          title: `استبدال الغداء بـ«${cheaperLunch.arabicName}»`,
+          description: `يوفّر ${formatMoney(currentLunch.estimatedPortionCost - cheaperLunch.estimatedPortionCost, countryCode)} في هذه الوجبة، وفيه ${cheaperLunch.protein} جم بروتين.`,
+          data: { dayId: selectedDayId, category: 'lunch', newMealId: cheaperLunch.id },
         };
       } else if (content.includes('ركبتي') || content.includes('بديل للسكوات') || content.includes('بديل للرجل')) {
         actionProposal = {
           type: 'swap_exercise' as const,
-          title: 'استبدال السكوات بتمرين دفع الأرجل الخفيف أو الجلوس على الحائط',
-          description: 'يقلل الحمل الميكانيكي على أوتار الركبة بنسبة 40%.',
-          data: { newExerciseId: 'ex_leg_press' },
+          title: 'استبدال التمرين الحالي بالجلوس على الحائط',
+          description: 'تمرين ثابت للأفخاذ بحمل أخف على الركبة، وتتحكم أنت بالزاوية.',
+          data: { newExerciseId: 'ex_wall_sit' },
         };
       }
 
@@ -610,7 +797,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         id: `msg_a_${Date.now()}`,
         role: 'assistant',
         content: data.reply || 'أنا في خدمتك لمساعدتك في التغذية والتمارين وفق ميزانيتك.',
-        timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString('ar-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
         actionProposal,
       };
 
@@ -620,13 +807,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         id: `msg_a_${Date.now()}`,
         role: 'assistant',
         content: 'أنا معك! لتوفير الميزانية، ركّز على البيض والعدس والتونة والخضار الموسمي، ولتجنب إجهاد المفاصل تحكم بسرعة التمرين وتدرج بالأوزان.',
-        timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString('ar-u-nu-latn', { hour: '2-digit', minute: '2-digit' }),
       };
       setChatMessages((prev) => [...prev, fallbackMsg]);
     } finally {
       setIsChatLoading(false);
     }
-  }, [chatMessages, userProfile, activeWorkoutSession, currentExerciseIndex, selectedDayId]);
+  }, [chatMessages, userProfile, activeWorkoutSession, currentExerciseIndex, selectedDayId, nutritionDays, allMeals, countryCode]);
 
   const applyActionProposal = useCallback((proposal: any) => {
     if (proposal.type === 'swap_meal' && proposal.data) {
@@ -646,15 +833,31 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setWeeklyReviews((prev) => [fullReview, ...prev]);
   }, []);
 
+  const completeOnboarding = useCallback((profile: UserProfile) => {
+    const p = migrateProfile({ ...profile, isCompleted: true });
+    const wasCompleted = userProfile.isCompleted;
+    setUserProfile(p);
+    const c = countryByName(p.country);
+    notify(
+      'success',
+      wasCompleted ? 'حفظنا تعديلات ملفك' : 'خطتك جاهزة',
+      `أكل أسبوعي بأسعار ${c.name} وميزانية ${formatMoney(p.foodBudgetWeekly, c.code)}، و${p.workoutDaysPerWeek} حصص تمرين (${LOCATION_LABELS[p.location]}) أسبوعياً. ستجد هنا كل صباح خطة يومك.`
+    );
+  }, [userProfile.isCompleted, notify]);
+
   const resetAllData = useCallback(() => {
-    setUserProfile(newUserProfile(user.name));
-    setNutritionDays(INITIAL_NUTRITION_DAYS);
-    setShoppingList(INITIAL_SHOPPING_LIST);
-    setWorkoutSessions(INITIAL_WORKOUT_SESSIONS);
+    const fresh = newUserProfile(user.name);
+    const keepCountry = countryByName(userProfile.country);
+    const profile = { ...fresh, country: keepCountry.name, currency: keepCountry.currency, foodBudgetWeekly: suggestedWeeklyBudget(keepCountry.code) };
+    setUserProfile(profile);
+    setNutritionDays(defaultWeekPlan(keepCountry.code));
+    setShoppingStatus({});
+    setWorkoutSessions(buildWeeklyWorkouts(profile.location, profile.workoutDaysPerWeek));
     setWeeklyReviews([]);
+    notify('info', 'بدأت من جديد', 'مسحنا خطتك ومشترياتك وتقدّمك، وبقيت إشعاراتك السابقة محفوظة هنا.');
     setActiveTab('today');
     setIsOnboardingOpen(true);
-  }, [user.name]);
+  }, [user.name, userProfile.country, notify]);
 
   return (
     <AppContext.Provider
@@ -676,6 +879,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         swapToFaster,
         usePantryAlternative,
 
+        countryCode,
+        money,
+        setCountry,
+        todayIndex,
+        todayDayPlan,
+        todayWorkout,
+        nextWorkout,
+
         shoppingList,
         toggleShoppingItem,
         updateActualPrice,
@@ -683,6 +894,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         totalEstimatedGroceries,
         totalActualGroceries,
         remainingBudget,
+        overBudget,
 
         workoutSessions,
         activeWorkoutSession,
@@ -702,7 +914,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         isExpressWorkout,
         toggleExpressWorkout,
         workoutLocation,
-        toggleWorkoutLocation,
+        setWorkoutLocation,
+        setWorkoutDays,
         finishCurrentSet,
         skipRestTimer,
         adjustRestTimer,
@@ -727,6 +940,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
         isAdminMode,
         setIsAdminMode,
+
+        notifications,
+        unreadCount,
+        notify,
+        markAllNotificationsRead,
+        completeOnboarding,
 
         user,
         setUser: onUserChange,

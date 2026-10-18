@@ -22,7 +22,13 @@ export const ProgressView: React.FC = () => {
     weeklyReviews,
     submitWeeklyReview,
     workoutSessions,
+    money,
   } = useApp();
+
+  const doneSessions = workoutSessions.filter((w) => w.isCompleted).length;
+  const workoutPct = workoutSessions.length ? Math.round((doneSessions / workoutSessions.length) * 100) : 0;
+  const doneSets = workoutSessions.reduce((a, w) => a + w.exercises.reduce((b, e) => b + e.sets.filter((x) => x.completed).length, 0), 0);
+  const budgetLeft = userProfile.foodBudgetWeekly - totalActualGroceries;
 
   const [workoutRating, setWorkoutRating] = useState<number>(4);
   const [nutritionRating, setNutritionRating] = useState<number>(5);
@@ -47,7 +53,7 @@ export const ProgressView: React.FC = () => {
 
   const budgetAdherencePercent = Math.min(
     100,
-    Math.round(((userProfile.foodBudgetWeekly - totalActualGroceries) / userProfile.foodBudgetWeekly) * 100)
+    userProfile.foodBudgetWeekly > 0 ? Math.round((budgetLeft / userProfile.foodBudgetWeekly) * 100) : 0
   );
 
   return (
@@ -65,26 +71,30 @@ export const ProgressView: React.FC = () => {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-slate-100 text-xs">
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
             <span className="text-slate-500 block">التزام التمارين</span>
-            <span className="text-xl font-black text-slate-900 tabular-nums">75%</span>
-            <span className="text-[11px] text-emerald-700 block mt-0.5">3 من 4 حصص مكتملة</span>
+            <span className="text-xl font-black text-slate-900 tabular-nums">{workoutPct}%</span>
+            <span className="text-[11px] text-emerald-700 block mt-0.5">{doneSessions} من {workoutSessions.length} حصص هذا الأسبوع</span>
           </div>
 
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
             <span className="text-slate-500 block">التزام الميزانية</span>
             <span className="text-xl font-black text-emerald-700 tabular-nums">{budgetAdherencePercent}%</span>
-            <span className="text-[11px] text-slate-500 block mt-0.5">وفرت {userProfile.foodBudgetWeekly - totalActualGroceries} {userProfile.currency}</span>
+            <span className="text-[11px] text-slate-500 block mt-0.5">
+              {budgetLeft >= 0 ? `يتبقى ${money(budgetLeft)}` : `تجاوزت بـ ${money(-budgetLeft)}`}
+            </span>
           </div>
 
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-            <span className="text-slate-500 block">الوزن الأولي vs الآن</span>
+            <span className="text-slate-500 block">وزنك الحالي</span>
             <span className="text-xl font-black text-slate-900 tabular-nums">{userProfile.weightKg} كجم</span>
-            <span className="text-[11px] text-slate-500 block mt-0.5">المستهدف: {userProfile.targetWeightKg || 75} كجم</span>
+            <span className="text-[11px] text-slate-500 block mt-0.5">
+              {userProfile.targetWeightKg ? `المستهدف: ${userProfile.targetWeightKg} كجم` : 'عدّله من ملفك'}
+            </span>
           </div>
 
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-            <span className="text-slate-500 block">تطور الأوزان المرفوعة</span>
-            <span className="text-xl font-black text-emerald-700 tabular-nums">+4.5 كجم</span>
-            <span className="text-[11px] text-slate-500 block mt-0.5">في تمارين الظهر والصدر</span>
+            <span className="text-slate-500 block">المجموعات المنجزة</span>
+            <span className="text-xl font-black text-emerald-700 tabular-nums">{doneSets}</span>
+            <span className="text-[11px] text-slate-500 block mt-0.5">في حصص هذا الأسبوع</span>
           </div>
         </div>
       </div>

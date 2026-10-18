@@ -16,29 +16,30 @@ import {
   Dumbbell
 } from 'lucide-react';
 import { UserProfile, GoalType, ExperienceLevel, ActivityLevel } from '../types';
-import { COUNTRIES, currencyFor } from '../data/countries';
+import { COUNTRIES, countryByName, suggestedWeeklyBudget, money } from '../data/food';
+import { LOCATION_LABELS } from '../data/workouts';
+import type { LocationPreference } from '../types';
 
 export const OnboardingModal: React.FC = () => {
   const {
     isOnboardingOpen,
     setIsOnboardingOpen,
     userProfile,
-    updateUserProfile,
-    allMeals,
+    completeOnboarding,
   } = useApp();
 
-  const [mode, setMode] = useState<'form' | 'chat'>('form');
   const [step, setStep] = useState<number>(1);
   const [formData, setFormData] = useState<UserProfile>({ ...userProfile });
-  const [chatInputs, setChatInputs] = useState<string[]>([]);
-  const [chatStepIndex, setChatStepIndex] = useState<number>(0);
 
   if (!isOnboardingOpen) return null;
 
   const handleSaveAndGenerate = () => {
-    updateUserProfile({ ...formData, isCompleted: true });
+    completeOnboarding(formData);
     setIsOnboardingOpen(false);
   };
+
+  const formCountry = countryByName(formData.country);
+  const suggested = suggestedWeeklyBudget(formCountry.code, formData.budgetPersons || 1);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -55,27 +56,6 @@ export const OnboardingModal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Mode switch: Quick Form vs Interactive AI */}
-            <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs">
-              <button
-                onClick={() => setMode('form')}
-                className={`px-3 py-1.5 rounded-lg transition-colors font-medium ${
-                  mode === 'form' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                استمارة سريعة
-              </button>
-              <button
-                onClick={() => setMode('chat')}
-                className={`px-3 py-1.5 rounded-lg transition-colors font-medium flex items-center gap-1 ${
-                  mode === 'chat' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>محادثة تعارف</span>
-              </button>
-            </div>
-
             <button
               onClick={() => setIsOnboardingOpen(false)}
               className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
@@ -86,7 +66,6 @@ export const OnboardingModal: React.FC = () => {
         </div>
 
         {/* Mode A: Fast Structured Form in 3 Clear Steps */}
-        {mode === 'form' ? (
           <div className="space-y-6">
             {/* Step Indicators */}
             <div className="grid grid-cols-3 gap-2 text-xs">
@@ -183,7 +162,7 @@ export const OnboardingModal: React.FC = () => {
                         onClick={() => setFormData({ ...formData, goal: g.id as GoalType })}
                         className={`p-2.5 rounded-xl border text-xs font-semibold transition-all ${
                           formData.goal === g.id
-                            ? 'bg-slate-900 text-white border-slate-900'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
                             : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
                       >
@@ -205,49 +184,51 @@ export const OnboardingModal: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="font-semibold text-slate-800 block mb-1">الدولة</label>
-                    <select
-                      value={formData.country}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          country: e.target.value,
-                          currency: currencyFor(e.target.value) ?? formData.currency,
-                        })
-                      }
-                      className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs"
-                    >
-                      {!COUNTRIES.some((c) => c.name === formData.country) && (
-                        <option value={formData.country}>{formData.country}</option>
-                      )}
+                    <div className="grid grid-cols-2 gap-2">
                       {COUNTRIES.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}
-                        </option>
+                        <button
+                          key={c.code}
+                          type="button"
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              country: c.name,
+                              currency: c.currency,
+                              foodBudgetWeekly: suggestedWeeklyBudget(c.code, formData.budgetPersons || 1),
+                            })
+                          }
+                          className={`h-10 rounded-xl border text-xs font-bold transition-colors ${
+                            formCountry.code === c.code
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          {c.name} ({c.currency})
+                        </button>
                       ))}
-                    </select>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1.5">الأسعار من متاجر الدولة التي تختارها.</p>
                   </div>
 
                   <div>
-                    <label className="font-semibold text-slate-800 block mb-1">العملة</label>
-                    <input
-                      type="text"
-                      value={formData.currency}
-                      onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                      className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-slate-800 block mb-1">الميزانية الغذائية الأسبوعية</label>
+                    <label className="font-semibold text-slate-800 block mb-1">
+                      ميزانية الأكل الأسبوعية ({formCountry.currency})
+                    </label>
                     <input
                       type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step={formCountry.code === 'OM' ? 0.5 : 5}
                       value={formData.foodBudgetWeekly}
-                      onChange={(e) => setFormData({ ...formData, foodBudgetWeekly: Number(e.target.value) })}
+                      onChange={(e) => setFormData({ ...formData, foodBudgetWeekly: Math.max(0, Number(e.target.value) || 0) })}
                       className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs font-bold text-emerald-800"
                     />
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      خطة الأسبوع لشخص واحد تكلّف نحو {money(suggested / 1.15, formCountry.code)}، ونقترح {money(suggested, formCountry.code)}.
+                    </p>
                   </div>
                 </div>
 
@@ -294,9 +275,11 @@ export const OnboardingModal: React.FC = () => {
                       onChange={(e) => setFormData({ ...formData, workoutDaysPerWeek: Number(e.target.value) })}
                       className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs"
                     >
-                      <option value={3}>3 أيام (مثالي للمبتدئين والعائدين)</option>
-                      <option value={4}>4 أيام (جزء علوي وسفلي)</option>
+                      <option value={2}>يومان</option>
+                      <option value={3}>3 أيام (مناسبة للمبتدئين)</option>
+                      <option value={4}>4 أيام</option>
                       <option value={5}>5 أيام</option>
+                      <option value={6}>6 أيام</option>
                     </select>
                   </div>
 
@@ -315,27 +298,29 @@ export const OnboardingModal: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-800 block mb-1">مكان التمرين المفضل</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, location: 'gym' })}
-                      className={`p-3 rounded-xl border text-xs font-semibold ${
-                        formData.location === 'gym' ? 'bg-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700'
-                      }`}
-                    >
-                      في الصالة الرياضية (الجيم)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, location: 'home' })}
-                      className={`p-3 rounded-xl border text-xs font-semibold ${
-                        formData.location === 'home' ? 'bg-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700'
-                      }`}
-                    >
-                      في المنزل (أوزان أو وزن الجسم)
-                    </button>
+                  <label className="font-semibold text-slate-800 block mb-1">نوع التمرين</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {(['gym', 'home', 'run', 'walk'] as LocationPreference[]).map((loc) => (
+                      <button
+                        key={loc}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, location: loc })}
+                        className={`p-3 rounded-xl border text-xs font-semibold transition-colors ${
+                          formData.location === loc
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        {LOCATION_LABELS[loc]}
+                      </button>
+                    ))}
                   </div>
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    {formData.location === 'gym' && 'أجهزة ودمبل، بحصص للجزء العلوي والسفلي والجسم كاملاً.'}
+                    {formData.location === 'home' && 'بوزن الجسم فقط، دون أي أدوات.'}
+                    {formData.location === 'run' && 'برنامج للمبتدئين يبدأ بجري ومشي متناوبين، ثم جري متواصل.'}
+                    {formData.location === 'walk' && 'مشي سريع وفترات متناوبة، مناسب للبداية وللمفاصل الحساسة.'}
+                  </p>
                 </div>
 
                 <div>
@@ -344,7 +329,7 @@ export const OnboardingModal: React.FC = () => {
                     type="text"
                     placeholder="مثال: خشونة في الركبة، ألم أسفل الظهر، كتف حساس..."
                     value={formData.injuries.join('، ')}
-                    onChange={(e) => setFormData({ ...formData, injuries: [e.target.value] })}
+                    onChange={(e) => setFormData({ ...formData, injuries: e.target.value ? [e.target.value] : [] })}
                     className="w-full h-10 px-3 border border-slate-200 rounded-xl focus:border-emerald-600 focus:outline-none text-xs"
                   />
                 </div>
@@ -367,7 +352,7 @@ export const OnboardingModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setStep(step + 1)}
-                  className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
                 >
                   التالي
                 </button>
@@ -382,42 +367,7 @@ export const OnboardingModal: React.FC = () => {
               )}
             </div>
           </div>
-        ) : (
-          /* Mode B: Conversational AI Onboarding */
-          <div className="space-y-4 text-xs sm:text-sm">
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-              <div className="flex items-center gap-2 text-emerald-800 font-bold">
-                <Sparkles className="w-4 h-4 text-emerald-600" />
-                <span>محادثة التعارف مع كابتن على قدّك</span>
-              </div>
-              <p className="text-slate-600 leading-relaxed">
-                مرحباً بك! سأطرح عليك أسئلة سريعة لفهم هدفك وميزانيتك:
-                «ما هي ميزانيتك التقريبية للطعام أسبوعياً وهل تعاني من أي آلام في المفاصل؟»
-              </p>
-              <div className="flex items-center gap-2 pt-2">
-                <input
-                  type="text"
-                  placeholder="مثال: ميزانيتي 180 ريال أسبوعياً، وعندي ألم بسيط بالركبة..."
-                  className="flex-1 h-10 px-3 border border-slate-200 rounded-xl text-xs focus:border-emerald-600 focus:outline-none"
-                />
-                <button
-                  onClick={handleSaveAndGenerate}
-                  className="px-4 h-10 bg-emerald-600 text-white font-bold rounded-xl text-xs hover:bg-emerald-700"
-                >
-                  إرسال واعتماد
-                </button>
-              </div>
-            </div>
-            <div className="text-center pt-2">
-              <button
-                onClick={() => setMode('form')}
-                className="text-xs text-slate-500 hover:text-slate-800 underline"
-              >
-                العودة للاستمارة المباشرة
-              </button>
-            </div>
-          </div>
-        )}
+
       </div>
     </div>
   );

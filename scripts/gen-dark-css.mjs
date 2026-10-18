@@ -125,5 +125,14 @@ for (const token of [...tokens].sort()) {
 }
 
 const header = `/* مولَّد تلقائياً بواسطة scripts/gen-dark-css.mjs — لا تعدّله يدوياً. */\n`;
-writeFileSync(join(SRC, 'dark.css'), header + rules.join('\n') + '\n');
+const target = join(SRC, 'dark.css');
+const next = header + rules.join('\n') + '\n';
+let current = '';
+try {
+  current = readFileSync(target, 'utf8');
+} catch {
+  // أول مرة
+}
+// لا نكتب الملف إلا إذا تغيّر، حتى لا يعيد خادم التطوير البناء بلا نهاية
+if (current !== next) writeFileSync(target, next);
 console.log(`dark.css: ${rules.length} rules from ${tokens.size} color classes`);

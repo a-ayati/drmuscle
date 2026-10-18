@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { MealThumb } from './MealThumb';
 import {
   Clock,
   Flame,
@@ -16,6 +17,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Meal } from '../types';
+import { dayTotals, MEAL_SLOTS, SLOT_LABELS, MealSlot, PRICES_CHECKED_AT } from '../data/food';
 
 export const NutritionView: React.FC = () => {
   const {
@@ -28,33 +30,21 @@ export const NutritionView: React.FC = () => {
     swapToFaster,
     usePantryAlternative,
     allMeals,
+    money,
   } = useApp();
 
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
-  const [swapModalMeal, setSwapModalMeal] = useState<{ dayId: string; category: 'breakfast' | 'lunch' | 'dinner' } | null>(null);
+  const [swapModalMeal, setSwapModalMeal] = useState<{ dayId: string; category: MealSlot } | null>(null);
 
   const currentDayPlan = nutritionDays.find((d) => d.dayId === selectedDayId) || nutritionDays[0];
 
-  const totalCalories =
-    (currentDayPlan.meals.breakfast?.calories || 0) +
-    (currentDayPlan.meals.lunch?.calories || 0) +
-    (currentDayPlan.meals.dinner?.calories || 0);
-
-  const totalProtein =
-    (currentDayPlan.meals.breakfast?.protein || 0) +
-    (currentDayPlan.meals.lunch?.protein || 0) +
-    (currentDayPlan.meals.dinner?.protein || 0);
-
-  const totalDailyCost =
-    (currentDayPlan.meals.breakfast?.estimatedPortionCost || 0) +
-    (currentDayPlan.meals.lunch?.estimatedPortionCost || 0) +
-    (currentDayPlan.meals.dinner?.estimatedPortionCost || 0);
+  const { calories: totalCalories, protein: totalProtein, cost: totalDailyCost } = dayTotals(currentDayPlan);
 
   const toggleExpand = (id: string) => {
     setExpandedMealId(expandedMealId === id ? null : id);
   };
 
-  const renderMealCard = (meal: Meal, category: 'breakfast' | 'lunch' | 'dinner', categoryName: string) => {
+  const renderMealCard = (meal: Meal, category: MealSlot, categoryName: string) => {
     const isExpanded = expandedMealId === meal.id;
 
     return (
@@ -62,15 +52,7 @@ export const NutritionView: React.FC = () => {
         <div className="flex flex-col sm:flex-row">
           {/* Meal Photo */}
           <div className="sm:w-64 h-48 sm:h-auto relative bg-slate-100 shrink-0">
-            <img
-              src={meal.image}
-              alt={meal.arabicName}
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.currentTarget as HTMLElement).style.display = 'none';
-              }}
-            />
+            <MealThumb meal={meal} />
             <div className="absolute top-3 right-3 bg-slate-900/80 backdrop-blur-xs text-white text-xs font-semibold px-2.5 py-1 rounded-md">
               {categoryName}
             </div>
@@ -84,7 +66,7 @@ export const NutritionView: React.FC = () => {
                   {meal.arabicName}
                 </h3>
                 <div className="text-sm font-extrabold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-lg tabular-nums">
-                  {meal.estimatedPortionCost.toFixed(1)} {userProfile.currency} <span className="text-xs font-normal text-emerald-700">/ للحصة</span>
+                  {money(meal.estimatedPortionCost)} <span className="text-xs font-normal text-emerald-700">/ للحصة</span>
                 </div>
               </div>
 
@@ -112,8 +94,8 @@ export const NutritionView: React.FC = () => {
               <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-600 flex items-start gap-2">
                 <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-slate-800">حسبة العبوة والتوفير: </span>
-                  تكلفة الحصة المأكولة ({meal.estimatedPortionCost.toFixed(1)} {userProfile.currency}). تكلفة شراء العبوات كاملة لأول مرة حوالي ({meal.packEstimatedCost.toFixed(0)} {userProfile.currency}) وتكفي لعدة وجبات خلال الأسبوع دون إهدار.
+                  <span className="font-semibold text-slate-800">كيف حسبنا السعر: </span>
+                  ما تأكله في هذه الحصة يكلّف {money(meal.estimatedPortionCost)}. شراء عبوات مكوناتها كاملة يكلّف نحو {money(meal.packEstimatedCost)}، وتكفي لوجبات أخرى خلال الأسبوع.
                 </div>
               </div>
             </div>
@@ -121,6 +103,7 @@ export const NutritionView: React.FC = () => {
             {/* Smart Action Buttons */}
             <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex flex-wrap items-center gap-1.5">
+                {meal.cheaperAlternativeId && (
                 <button
                   onClick={() => swapToCheaper(currentDayPlan.dayId, category)}
                   className="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-medium transition-colors flex items-center gap-1"
@@ -129,7 +112,9 @@ export const NutritionView: React.FC = () => {
                   <DollarSign className="w-3.5 h-3.5" />
                   <span>أرخص</span>
                 </button>
+                )}
 
+                {meal.fasterAlternativeId && (
                 <button
                   onClick={() => swapToFaster(currentDayPlan.dayId, category)}
                   className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium transition-colors flex items-center gap-1"
@@ -138,13 +123,14 @@ export const NutritionView: React.FC = () => {
                   <Zap className="w-3.5 h-3.5" />
                   <span>أسرع</span>
                 </button>
+                )}
 
                 <button
                   onClick={() => usePantryAlternative(currentDayPlan.dayId, category)}
                   className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors"
-                  title="استخدام ما هو متوفر في مطبخك"
+                  title="وجبة تعتمد على مؤن البيت مثل العدس والأرز والبيض"
                 >
-                  استخدم الموجود عندي
+                  من مؤن البيت
                 </button>
 
                 <button
@@ -176,7 +162,7 @@ export const NutritionView: React.FC = () => {
                 {meal.ingredients.map((ing, i) => (
                   <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200/80">
                     <span className="font-medium text-slate-800">{ing.name} ({ing.portionQty})</span>
-                    <span className="text-slate-500 text-[11px]">{ing.packName}</span>
+                    <span className="text-slate-500 text-[11px] text-left">{ing.packName} · {money(ing.packPrice)}</span>
                   </div>
                 ))}
               </div>
@@ -203,16 +189,18 @@ export const NutritionView: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              التخطيط الغذائي الذكي حسب الميزانية
+              جدول الأكل الأسبوعي
             </h1>
             <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-              وجبات عالية البروتين ومصممة من مكونات شعبية متوفرة في أسواق {userProfile.country}. عند تبديل أي وجبة، تتحدث تلقائياً قائمة المشتريات وميزانية الأسبوع.
+              أربع وجبات يومياً من مكونات متوفرة في {userProfile.country}، بأسعار متاجرها بتاريخ {PRICES_CHECKED_AT}. عند تبديل أي وجبة تتحدث قائمة المشتريات والميزانية تلقائياً.
             </p>
           </div>
 
           <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs text-emerald-900">
-            <div className="font-bold">الميزانية المستهدفة: {userProfile.foodBudgetWeekly} {userProfile.currency}/أسبوع</div>
-            <div className="text-[11px] text-emerald-700 mt-0.5">تكلفة متوازنة تكفي شخصاً واحداً دون هدر</div>
+            <div className="font-bold">الميزانية المستهدفة: {money(userProfile.foodBudgetWeekly)}/أسبوع</div>
+            <div className="text-[11px] text-emerald-700 mt-0.5">
+              {userProfile.budgetPersons > 1 ? `لـ${userProfile.budgetPersons} أشخاص` : 'لشخص واحد'}
+            </div>
           </div>
         </div>
 
@@ -226,7 +214,7 @@ export const NutritionView: React.FC = () => {
                 onClick={() => setSelectedDayId(d.dayId)}
                 className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all whitespace-nowrap shrink-0 ${
                   isSelected
-                    ? 'bg-slate-900 text-white shadow-xs'
+                    ? 'bg-emerald-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
                 }`}
               >
@@ -250,7 +238,7 @@ export const NutritionView: React.FC = () => {
           <span aria-hidden="true">·</span>
           <div>
             <span className="text-slate-500">تكلفة حصص اليوم: </span>
-            <span className="font-bold text-slate-900 tabular-nums">{totalDailyCost.toFixed(1)} {userProfile.currency}</span>
+            <span className="font-bold text-slate-900 tabular-nums">{money(totalDailyCost)}</span>
           </div>
         </div>
       </div>
@@ -259,18 +247,18 @@ export const NutritionView: React.FC = () => {
       <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 sm:p-5 flex items-start gap-3 text-xs text-amber-900">
         <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
         <div>
-          <h4 className="font-bold text-sm text-amber-950 mb-1">الواقعية والشفافية في «على قدّك»</h4>
+          <h4 className="font-bold text-sm text-amber-950 mb-1">أرقام تقريبية وصادقة</h4>
           <p className="leading-relaxed">
-            لا نعد بخطة خارقة بميزانية شبه معدومة؛ إذا كانت الميزانية منخفضة، يعتمد النظام بذكاء على مصادر البروتين النباتية والحيوانية الموفرة (العدس، البيض، التونة، الحمص، الأجبان الخفيفة) ويقلل اللحوم الفارهة للحفاظ على توازن السعرات والبروتين دون إرهاق ميزانيتك.
+            السعرات والبروتين تقديرات من جداول التغذية المعتادة للكميات المذكورة، والأسعار كما ظهرت على مواقع المتاجر وقد تتغير بالعروض. الزيت والملح والبهارات من مخزون البيت ولا تدخل في الحساب.
           </p>
         </div>
       </div>
 
       {/* 3. Meals of the selected day */}
       <div className="space-y-4">
-        {currentDayPlan.meals.breakfast && renderMealCard(currentDayPlan.meals.breakfast, 'breakfast', 'وجبة الإفطار')}
-        {currentDayPlan.meals.lunch && renderMealCard(currentDayPlan.meals.lunch, 'lunch', 'وجبة الغداء')}
-        {currentDayPlan.meals.dinner && renderMealCard(currentDayPlan.meals.dinner, 'dinner', 'وجبة العشاء')}
+        {MEAL_SLOTS.map((slot) =>
+          currentDayPlan.meals[slot] ? renderMealCard(currentDayPlan.meals[slot]!, slot, SLOT_LABELS[slot]) : null
+        )}
       </div>
 
       {/* 4. Swap Meal Modal */}
@@ -279,7 +267,7 @@ export const NutritionView: React.FC = () => {
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-900 text-base">
-                اختر وجبة بديلة متوافقة
+                بديل لـ{SLOT_LABELS[swapModalMeal.category]} · {currentDayPlan.dayName}
               </h3>
               <button
                 onClick={() => setSwapModalMeal(null)}
@@ -294,7 +282,13 @@ export const NutritionView: React.FC = () => {
             </p>
 
             <div className="space-y-3">
-              {allMeals.map((candidate) => (
+              {allMeals
+                .filter(
+                  (m) =>
+                    m.category === currentDayPlan.meals[swapModalMeal.category]?.category &&
+                    m.id !== currentDayPlan.meals[swapModalMeal.category]?.id
+                )
+                .map((candidate) => (
                 <div
                   key={candidate.id}
                   onClick={() => {
@@ -303,12 +297,7 @@ export const NutritionView: React.FC = () => {
                   }}
                   className="p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 cursor-pointer transition-all flex items-center gap-3"
                 >
-                  <img
-                    src={candidate.image}
-                    alt={candidate.arabicName}
-                    className="w-16 h-16 rounded-lg object-cover shrink-0"
-                    referrerPolicy="no-referrer"
-                  />
+                  <div className="w-16 h-16 rounded-lg overflow-hidden shrink-0"><MealThumb meal={candidate} /></div>
                   <div className="flex-1">
                     <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
                       {candidate.arabicName}
@@ -316,9 +305,9 @@ export const NutritionView: React.FC = () => {
                     <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
                       <span className="tabular-nums">{candidate.calories} سعرة</span>
                       <span>·</span>
-                      <span className="text-emerald-700 font-semibold tabular-nums">{candidate.protein}g بروتين</span>
+                      <span className="text-emerald-700 font-semibold tabular-nums">{candidate.protein} جم بروتين</span>
                       <span>·</span>
-                      <span className="tabular-nums">{candidate.estimatedPortionCost.toFixed(1)} {userProfile.currency}</span>
+                      <span className="tabular-nums">{money(candidate.estimatedPortionCost)}</span>
                     </div>
                   </div>
                   <div className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-emerald-600 hover:text-white transition-colors">

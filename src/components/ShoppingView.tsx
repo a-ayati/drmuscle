@@ -24,6 +24,7 @@ export const ShoppingView: React.FC = () => {
     totalEstimatedGroceries,
     totalActualGroceries,
     remainingBudget,
+    money,
   } = useApp();
 
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -36,8 +37,8 @@ export const ShoppingView: React.FC = () => {
     'لحوم ودواجن وأسماك',
     'خضار وفواكه',
     'بقوليات وحبوب',
-    'بهارات ومؤن',
-  ];
+    'مخبوزات',
+  ].filter((a) => a === 'all' || shoppingList.some((i) => i.aisle === a));
 
   const filteredList = shoppingList.filter((item) => {
     if (filterAisle !== 'all' && item.aisle !== filterAisle) return false;
@@ -70,7 +71,7 @@ export const ShoppingView: React.FC = () => {
               قائمة المشتريات والميزانية الأسبوعية
             </h1>
             <p className="text-sm text-slate-600 mt-1 max-w-xl">
-              تم تجميع المكونات المشتركة لتقليل الهدر، واستبعاد المواد المتوفرة في مطبخك تلقائياً.
+              مبنية من وجبات أسبوعك كما هي الآن. علّم ما عندك في المطبخ ليُخصم من الحساب، واكتب السعر الذي دفعته إن اختلف.
             </p>
           </div>
 
@@ -78,21 +79,21 @@ export const ShoppingView: React.FC = () => {
             <div>
               <span className="text-slate-500 block">إجمالي المقدر</span>
               <span className="text-base font-bold text-slate-800 tabular-nums">
-                {totalEstimatedGroceries.toFixed(0)} {userProfile.currency}
+                {money(totalEstimatedGroceries)}
               </span>
             </div>
             <div className="w-px h-8 bg-slate-200" />
             <div>
               <span className="text-slate-500 block">المصروف الفعلي</span>
               <span className="text-base font-bold text-slate-900 tabular-nums">
-                {totalActualGroceries.toFixed(0)} {userProfile.currency}
+                {money(totalActualGroceries)}
               </span>
             </div>
             <div className="w-px h-8 bg-slate-200" />
             <div>
               <span className="text-slate-500 block">المتبقي من الميزانية</span>
               <span className="text-base font-bold text-emerald-700 tabular-nums">
-                {remainingBudget.toFixed(0)} {userProfile.currency}
+                {money(remainingBudget)}
               </span>
             </div>
           </div>
@@ -100,7 +101,7 @@ export const ShoppingView: React.FC = () => {
 
         {/* Grocery Progress Bar */}
         <div className="mt-6 pt-5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-          <span>تقدم التسوق: {purchasedCount} من {totalItemsToBuy} منتجات تم شراؤها</span>
+          <span>اشتريت {purchasedCount} من {totalItemsToBuy} أصناف</span>
           <span className="font-semibold text-emerald-700 tabular-nums">
             {totalItemsToBuy > 0 ? Math.round((purchasedCount / totalItemsToBuy) * 100) : 100}%
           </span>
@@ -123,7 +124,7 @@ export const ShoppingView: React.FC = () => {
             onClick={() => setFilterAisle(aisle)}
             className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
               filterAisle === aisle
-                ? 'bg-slate-900 text-white shadow-xs'
+                ? 'bg-emerald-600 text-white shadow-xs'
                 : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -181,9 +182,9 @@ export const ShoppingView: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                    <span>الكمية المطلوبة: <strong className="text-slate-800">{item.recipeQty}</strong></span>
+                    <span>تحتاج: <strong className="text-slate-800">{item.recipeQty}</strong></span>
                     <span aria-hidden="true">·</span>
-                    <span>العبوة بالسوق: <strong className="text-slate-800">{item.packToBuy}</strong></span>
+                    <span>تشتري: <strong className="text-slate-800">{item.packToBuy}</strong></span>
                   </div>
 
                   {item.cheaperTip && (
@@ -192,6 +193,7 @@ export const ShoppingView: React.FC = () => {
                       <span>نصيحة توفير: {item.cheaperTip}</span>
                     </div>
                   )}
+                  {item.sourceNote && <div className="text-[11px] text-slate-400">{item.sourceNote}</div>}
                 </div>
               </div>
 
@@ -206,7 +208,7 @@ export const ShoppingView: React.FC = () => {
                       : 'border-slate-200 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  {item.inPantry ? 'في مطبخي (مخصوم)' : 'متوفر عندي بالمطبخ'}
+                  {item.inPantry ? 'عندي في المطبخ (مخصوم)' : 'عندي في المطبخ'}
                 </button>
 
                 {/* Price Display and Edit */}
@@ -216,9 +218,11 @@ export const ShoppingView: React.FC = () => {
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
+                          inputMode="decimal"
+                          step="any"
                           value={tempPrice}
                           onChange={(e) => setTempPrice(e.target.value)}
-                          className="w-16 h-8 px-2 border border-emerald-500 rounded-lg text-xs font-bold text-center"
+                          className="w-20 h-8 px-2 border border-emerald-500 rounded-lg text-xs font-bold text-center bg-white text-slate-900"
                           autoFocus
                         />
                         <button
@@ -236,11 +240,11 @@ export const ShoppingView: React.FC = () => {
                       >
                         <div className="text-right">
                           <div className="font-bold text-slate-900 text-sm tabular-nums">
-                            {currentPrice.toFixed(1)} {userProfile.currency}
+                            {money(currentPrice)}
                           </div>
                           {item.actualPrice !== undefined && item.actualPrice !== item.estimatedPrice && (
                             <div className="text-[10px] text-slate-400 line-through tabular-nums">
-                              المقدر: {item.estimatedPrice.toFixed(1)}
+                              المقدّر: {money(item.estimatedPrice)}
                             </div>
                           )}
                         </div>
@@ -259,10 +263,10 @@ export const ShoppingView: React.FC = () => {
       <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-5 text-xs text-slate-600 space-y-2">
         <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
           <Info className="w-4 h-4 text-emerald-600" />
-          <span>الشفافية ومصدر الأسعار في «على قدّك»</span>
+          <span>من أين الأسعار؟</span>
         </div>
         <p className="leading-relaxed">
-          الأسعار المعروضة هي متوسطات تقديرية واقعية محدّثة للأسواق المحلية في {userProfile.country} (متاجر التجزئة ومحلات الخضار). نظراً لتفاوت الأسعار والعروض الأسبوعية بين المتاجر، يتيح لك التطبيق إدخال السعر الفعلي الذي دفعته بدقة لمقارنته وحفظ ميزانيتك.
+          كل سعر منقول من موقع متجر في {userProfile.country} (لولو أو كارفور) لعبوة محددة، والتاريخ مكتوب تحت كل صنف. المؤن التي تكفي أكثر من أسبوع (الأرز والعدس والشوفان والدجاج المجمد) نحسب منها حصة هذا الأسبوع فقط. الأسعار تتغير بالعروض، فاكتب السعر الذي دفعته ليصبح حسابك دقيقاً.
         </p>
       </div>
     </div>

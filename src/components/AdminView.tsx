@@ -16,8 +16,10 @@ import {
 
 import { AdminUsersTab } from './AdminUsersTab';
 
+import { COUNTRIES, ingredientsFor, money as formatMoney, PRICES_CHECKED_AT } from '../data/food';
 export const AdminView: React.FC = () => {
-  const { userProfile, allMeals, exerciseLibrary, shoppingList, setIsAdminMode } = useApp();
+  const { userProfile, allMeals, exerciseLibrary, shoppingList, setIsAdminMode, money,
+  } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState<'users' | 'tiers' | 'prices' | 'exercises' | 'feedback'>('users');
 
   return (
@@ -51,7 +53,7 @@ export const AdminView: React.FC = () => {
           {[
             { id: 'users', label: 'المستخدمون' },
             { id: 'tiers', label: 'باقات الاشتراك' },
-            { id: 'prices', label: 'مؤشر أسعار السوق' },
+            { id: 'prices', label: 'الأسعار' },
             { id: 'exercises', label: 'إدارة التمارين' },
             { id: 'feedback', label: 'بلاغات ورضا المستخدمين' },
           ].map((tab) => (
@@ -184,35 +186,36 @@ export const AdminView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 2: Market Price Index Admin */}
+      {/* Tab 2: أسعار المكونات في كل دولة */}
       {activeAdminTab === 'prices' && (
         <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-slate-900 text-base">
-              مؤشر أسعار المكونات الأساسية ({userProfile.country})
-            </h3>
-            <span className="text-xs text-slate-500">تحديث آلي أسبوعي</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold text-slate-900 text-base">أسعار المكونات في كل دولة</h3>
+            <span className="text-xs text-slate-500">آخر تحديث: {PRICES_CHECKED_AT} · للتعديل: src/data/food.ts</span>
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
               <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                 <tr>
-                  <th className="p-3">السلعة</th>
-                  <th className="p-3">القسم</th>
-                  <th className="p-3">متوسط سعر التجزئة</th>
-                  <th className="p-3">سعر الجملة المقترح</th>
-                  <th className="p-3">حالة الوفرة</th>
+                  <th className="p-3">المكوّن</th>
+                  {COUNTRIES.map((c) => (
+                    <th key={c.code} className="p-3">{c.name}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {shoppingList.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/60">
-                    <td className="p-3 font-semibold text-slate-800">{item.name}</td>
-                    <td className="p-3 text-slate-500">{item.aisle}</td>
-                    <td className="p-3 font-bold tabular-nums text-slate-900">{item.estimatedPrice} {userProfile.currency}</td>
-                    <td className="p-3 text-emerald-700 font-bold tabular-nums">{(item.estimatedPrice * 0.8).toFixed(1)} {userProfile.currency}</td>
-                    <td className="p-3 text-emerald-700 font-medium">متوفر بالسوق</td>
+                {Object.values(ingredientsFor('QA')).map((ing) => (
+                  <tr key={ing.id} className="hover:bg-slate-50/60 align-top">
+                    <td className="p-3 font-semibold text-slate-800">{ing.name}</td>
+                    {COUNTRIES.map((c) => {
+                      const p = ingredientsFor(c.code)[ing.id];
+                      return (
+                        <td key={c.code} className="p-3">
+                          <div className="font-bold tabular-nums text-slate-900">{formatMoney(p.price, c.code)}</div>
+                          <div className="text-[11px] text-slate-500">{p.pack} · {p.store}</div>
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

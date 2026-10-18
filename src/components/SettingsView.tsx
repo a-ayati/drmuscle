@@ -23,7 +23,9 @@ import {
 import { useApp } from '../context/AppContext';
 import { api, ApiError } from '../lib/api';
 import { getThemeChoice, setThemeChoice, ThemeChoice } from '../lib/theme';
-import { COUNTRIES, currencyFor } from '../data/countries';
+import { COUNTRIES, PRICES_CHECKED_AT } from '../data/food';
+import { LOCATION_LABELS } from '../data/workouts';
+import type { LocationPreference } from '../types';
 
 const fmtDate = (ms: number) =>
   new Date(ms).toLocaleString('ar-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' });
@@ -118,7 +120,11 @@ export const SettingsView: React.FC = () => {
     audioMode,
     setAudioMode,
     workoutLocation,
-    toggleWorkoutLocation,
+    setWorkoutLocation,
+    setWorkoutDays,
+    setCountry,
+    countryCode,
+    notify,
     setIsOnboardingOpen,
     resetAllData,
   } = useApp();
@@ -179,6 +185,7 @@ export const SettingsView: React.FC = () => {
       setPwCurrent('');
       setPwNext('');
       setPwMsg({ tone: 'ok', text: 'تم تغيير كلمة المرور، وخرجت أجهزتك الأخرى من الحساب.' });
+      notify('info', 'تغيّرت كلمة المرور', 'خرجت أجهزتك الأخرى من الحساب. إذا لم تغيّرها أنت، تواصل مع صاحب التطبيق فوراً.');
     } catch (err) {
       setPwMsg({ tone: 'warn', text: err instanceof ApiError ? err.message : 'تعذر تغيير كلمة المرور.' });
     } finally {
@@ -353,33 +360,20 @@ export const SettingsView: React.FC = () => {
       <Section
         icon={Wallet}
         title="الميزانية والسوق"
-        hint="أسعار المكونات تقديرية. إذا اختلف السعر في متجرك، اكتب السعر الفعلي في قائمة المشتريات."
+        hint={`الأسعار من مواقع متاجر الدولة المختارة بتاريخ ${PRICES_CHECKED_AT}. إذا اختلف السعر في متجرك، اكتب السعر الفعلي في قائمة المشتريات.`}
       >
-        <Row label="الدولة">
-          <select
-            className={`${fieldClass} w-44`}
+        <Row label="الدولة" hint="المتاح الآن: قطر وعُمان. تغيير الدولة يحدّث الأسعار والعملة ويقترح ميزانية جديدة.">
+          <Segmented<string>
             value={userProfile.country}
-            onChange={(e) =>
-              updateUserProfile({
-                country: e.target.value,
-                currency: currencyFor(e.target.value) ?? userProfile.currency,
-              })
-            }
-          >
-            {!COUNTRIES.some((c) => c.name === userProfile.country) && (
-              <option value={userProfile.country}>{userProfile.country}</option>
-            )}
-            {COUNTRIES.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            onChange={setCountry}
+            options={COUNTRIES.map((c) => ({ value: c.name, label: c.name }))}
+          />
         </Row>
         <Row label="الميزانية الأسبوعية للأكل" hint={`بالعملة: ${userProfile.currency}`}>
           <input
             type="number"
-            inputMode="numeric"
+            inputMode="decimal"
+            step={countryCode === 'OM' ? 0.5 : 5}
             min={0}
             className={`${fieldClass} w-32 tabular-nums`}
             value={userProfile.foodBudgetWeekly}
@@ -397,23 +391,17 @@ export const SettingsView: React.FC = () => {
 
       {/* 4. التمرين */}
       <Section icon={Dumbbell} title="التمرين">
-        <Row label="مكان التمرين المعتاد" hint="تتغيّر التمارين المقترحة حسب المكان.">
-          <Segmented<'gym' | 'home'>
+        <Row label="نوع التمرين" hint="يتغيّر برنامجك الأسبوعي كاملاً حسب اختيارك.">
+          <Segmented<LocationPreference>
             value={workoutLocation}
-            onChange={(v) => {
-              if (v !== workoutLocation) toggleWorkoutLocation();
-              updateUserProfile({ location: v });
-            }}
-            options={[
-              { value: 'gym', label: 'الصالة' },
-              { value: 'home', label: 'البيت' },
-            ]}
+            onChange={setWorkoutLocation}
+            options={(['gym', 'home', 'run', 'walk'] as LocationPreference[]).map((l) => ({ value: l, label: LOCATION_LABELS[l] }))}
           />
         </Row>
         <Row label="أيام التمرين في الأسبوع">
           <Segmented<string>
             value={String(userProfile.workoutDaysPerWeek)}
-            onChange={(v) => updateUserProfile({ workoutDaysPerWeek: Number(v) })}
+            onChange={(v) => setWorkoutDays(Number(v))}
             options={['2', '3', '4', '5', '6'].map((n) => ({ value: n, label: n }))}
           />
         </Row>

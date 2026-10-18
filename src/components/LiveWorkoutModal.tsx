@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { audioCoach } from '../services/audioCoach';
 import { useApp } from '../context/AppContext';
 import {
   X,
@@ -43,16 +44,63 @@ export const LiveWorkoutModal: React.FC = () => {
     sendChatMessage,
   } = useApp();
 
-  if (!isLiveWorkoutModalOpen || !activeWorkoutSession) return null;
-
-  const currentExPlan = activeWorkoutSession.exercises[currentExerciseIndex];
+  const currentExPlan = activeWorkoutSession?.exercises[currentExerciseIndex];
   const currentExData = exerciseLibrary.find((e) => e.id === currentExPlan?.exerciseId);
   const currentSet = currentExPlan?.sets[currentSetIndex];
 
-  const [inputWeight, setInputWeight] = useState<number>(currentSet?.weightKg || 12);
+  // كل الحالات قبل أي رجوع مبكر (قاعدة React)
+  const [inputWeight, setInputWeight] = useState<number>(currentSet?.weightKg || 0);
   const [inputReps, setInputReps] = useState<number>(currentSet?.targetReps || 10);
   const [showSwapDrawer, setShowSwapDrawer] = useState<boolean>(false);
   const [quickInWorkoutQuery, setQuickInWorkoutQuery] = useState<string>('');
+
+  // مؤقت المجموعة الزمنية (جري، مشي، بلانك، جلوس على الحائط)
+  const targetSec = currentSet?.targetDurationSec ?? 0;
+  const [setRemaining, setSetRemaining] = useState<number>(targetSec);
+  const [setRunning, setSetRunning] = useState(false);
+  const endAtRef = useRef<number | null>(null);
+
+  // عند الانتقال لمجموعة أو تمرين جديد: نعيد ضبط المدخلات والمؤقت
+  useEffect(() => {
+    setInputWeight(currentSet?.weightKg || 0);
+    setInputReps(currentSet?.targetReps || 10);
+    setSetRemaining(currentSet?.targetDurationSec ?? 0);
+    setSetRunning(false);
+    endAtRef.current = null;
+  }, [currentExerciseIndex, currentSetIndex, activeWorkoutSession?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!setRunning) return;
+    const id = window.setInterval(() => {
+      const left = Math.max(0, Math.ceil(((endAtRef.current ?? Date.now()) - Date.now()) / 1000));
+      setSetRemaining(left);
+      if (left > 0 && left <= 3) audioCoach.playCountdownTick();
+      if (left <= 0) {
+        setSetRunning(false);
+        endAtRef.current = null;
+        audioCoach.playRestComplete();
+      }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [setRunning]);
+
+  const toggleSetTimer = () => {
+    if (setRunning) {
+      setSetRunning(false);
+      endAtRef.current = null;
+    } else {
+      const from = setRemaining > 0 ? setRemaining : targetSec;
+      setSetRemaining(from);
+      endAtRef.current = Date.now() + from * 1000;
+      setSetRunning(true);
+    }
+  };
+  const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+  if (!isLiveWorkoutModalOpen || !activeWorkoutSession) return null;
+
+  const isTimed = targetSec > 0;
+  const usesWeight = Boolean(currentSet?.weightKg) || currentExData?.equipmentType === 'أجهزة' || currentExData?.equipmentType === 'دمبل' || currentExData?.equipmentType === 'بار';
 
   const nextExPlan = activeWorkoutSession.exercises[currentExerciseIndex + 1];
   const nextExData = nextExPlan ? exerciseLibrary.find((e) => e.id === nextExPlan.exerciseId) : null;
@@ -212,7 +260,7 @@ export const LiveWorkoutModal: React.FC = () => {
                   className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors self-start sm:self-auto"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                  <span>الجهاز مشغول؟ بدّل</span>
+                  <span>{currentExData?.equipmentType === 'أجهزة' ? 'الجهاز مشغول؟ بدّل' : 'بدّل التمرين'}</span>
                 </button>
               </div>
 
@@ -222,41 +270,69 @@ export const LiveWorkoutModal: React.FC = () => {
                 <p>{currentExData?.breathingGuide}</p>
               </div>
 
-              {/* Input Weight & Reps */}
-              <div className="grid grid-cols-2 gap-4 pt-2">
+              {isTimed ? (
+                /* مؤقت المجموعة الزمنية */
+                <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-5 text-center space-y-4">
+                  <span className="text-xs text-slate-400 block">المدة المستهدفة: {mmss(targetSec)}</span>
+                  <div className="text-6xl font-extrabold tabular-nums text-white" aria-live="polite">{mmss(setRemaining)}</div>
+                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${targetSec ? ((targetSec - setRemaining) / targetSec) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      onClick={toggleSetTimer}
+                      className="h-12 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2"
+                    >
+                      {setRunning ? <Pause className="w-5 h-5 text-white" /> : <Play className="w-5 h-5 text-white" />}
+                      <span>{setRunning ? 'إيقاف مؤقت' : setRemaining === 0 ? 'من جديد' : setRemaining < targetSec ? 'متابعة' : 'ابدأ'}</span>
+                    </button>
+                  </div>
+                  {setRemaining === 0 && <p className="text-sm text-emerald-400 font-semibold">انتهى الوقت! سجّل شعورك بالأسفل.</p>}
+                </div>
+              ) : (
+              <div className={`grid ${usesWeight ? 'grid-cols-2' : 'grid-cols-1'} gap-4 pt-2`}>
+                {usesWeight && (
                 <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center">
                   <span className="text-xs text-slate-400 block mb-1">الوزن (كجم)</span>
                   <div className="flex items-center justify-center gap-2">
                     <button
                       onClick={() => setInputWeight((w) => Math.max(0, w - 2.5))}
-                      className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      aria-label="إنقاص الوزن"
                     >
                       -
                     </button>
                     <span className="text-2xl font-bold text-white tabular-nums">{inputWeight}</span>
                     <button
                       onClick={() => setInputWeight((w) => w + 2.5)}
-                      className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      aria-label="زيادة الوزن"
                     >
                       +
                     </button>
                   </div>
-                  <span className="text-[10px] text-slate-500 mt-1 block">السابق: {currentSet?.weightKg || 12} كجم</span>
+                  <span className="text-[10px] text-slate-500 mt-1 block">المقترح: {currentSet?.weightKg ?? 0} كجم</span>
                 </div>
+                )}
 
                 <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center">
                   <span className="text-xs text-slate-400 block mb-1">التكرارات المنجزة</span>
                   <div className="flex items-center justify-center gap-2">
                     <button
                       onClick={() => setInputReps((r) => Math.max(1, r - 1))}
-                      className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      aria-label="إنقاص التكرارات"
                     >
                       -
                     </button>
                     <span className="text-2xl font-bold text-white tabular-nums">{inputReps}</span>
                     <button
                       onClick={() => setInputReps((r) => r + 1)}
-                      className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300"
+                      aria-label="زيادة التكرارات"
                     >
                       +
                     </button>
@@ -264,6 +340,7 @@ export const LiveWorkoutModal: React.FC = () => {
                   <span className="text-[10px] text-slate-500 mt-1 block">المستهدف: {currentSet?.targetReps || 10}</span>
                 </div>
               </div>
+              )}
 
               {/* Set Completion & RPE Evaluation buttons */}
               <div className="pt-3 space-y-2">
@@ -272,25 +349,25 @@ export const LiveWorkoutModal: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   <button
-                    onClick={() => finishCurrentSet(inputWeight, inputReps, 'easy')}
+                    onClick={() => finishCurrentSet(usesWeight && !isTimed ? inputWeight : 0, isTimed ? 0 : inputReps, 'easy')}
                     className="py-3 rounded-xl bg-slate-800 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500 text-xs font-semibold text-slate-200 transition-all text-center"
                   >
                     سهلة 🟢
                   </button>
                   <button
-                    onClick={() => finishCurrentSet(inputWeight, inputReps, 'moderate')}
+                    onClick={() => finishCurrentSet(usesWeight && !isTimed ? inputWeight : 0, isTimed ? 0 : inputReps, 'moderate')}
                     className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-all text-center shadow-lg"
                   >
                     مناسبة ⭐
                   </button>
                   <button
-                    onClick={() => finishCurrentSet(inputWeight, inputReps, 'hard')}
+                    onClick={() => finishCurrentSet(usesWeight && !isTimed ? inputWeight : 0, isTimed ? 0 : inputReps, 'hard')}
                     className="py-3 rounded-xl bg-slate-800 hover:bg-amber-950/60 border border-slate-700 hover:border-amber-500 text-xs font-semibold text-slate-200 transition-all text-center"
                   >
                     صعبة 🔥
                   </button>
                   <button
-                    onClick={() => finishCurrentSet(inputWeight, inputReps, 'pain')}
+                    onClick={() => finishCurrentSet(usesWeight && !isTimed ? inputWeight : 0, isTimed ? 0 : inputReps, 'pain')}
                     className="py-3 rounded-xl bg-rose-950/60 border border-rose-800 hover:bg-rose-900 text-xs font-semibold text-rose-300 transition-all text-center"
                   >
                     ألم / مفصل ⚠️

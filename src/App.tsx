@@ -8,6 +8,7 @@ import { AppProvider, useApp, SavedAppData } from './context/AppContext';
 import { AuthScreen } from './components/AuthScreen';
 import { SettingsView } from './components/SettingsView';
 import { ResetPasswordScreen } from './components/ResetPasswordScreen';
+import { NotificationsView } from './components/NotificationsView';
 import { api, ApiError, AuthUser } from './lib/api';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Header } from './components/Header';
@@ -45,6 +46,7 @@ const AppContent: React.FC = () => {
             {activeTab === 'library' && <ExerciseLibraryView />}
             {activeTab === 'progress' && <ProgressView />}
             {activeTab === 'settings' && <SettingsView />}
+            {activeTab === 'notifications' && <NotificationsView />}
           </>
         )}
       </main>
@@ -52,7 +54,7 @@ const AppContent: React.FC = () => {
       {/* 3. Floating AI Assistant Quick Trigger */}
       <button
         onClick={() => setIsChatDrawerOpen(true)}
-        className="fixed bottom-20 lg:bottom-6 left-5 z-30 h-12 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg transition-all"
+        className="hidden lg:flex fixed bottom-6 left-5 z-30 h-12 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs sm:text-sm items-center gap-2 shadow-lg transition-all"
         aria-label="محادثة كابتن على قدّك"
       >
         <MessageSquareText className="w-5 h-5 text-amber-300" />

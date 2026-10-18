@@ -1,17 +1,17 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Dumbbell, Settings, ShieldCheck } from 'lucide-react';
+import { Dumbbell, Settings, ShieldCheck, Bell } from 'lucide-react';
 
 export const Header: React.FC = () => {
-  const { activeTab, setActiveTab, startLiveWorkout, isAdminMode, setIsAdminMode, user } = useApp();
+  const { activeTab, setActiveTab, startLiveWorkout, isAdminMode, setIsAdminMode, user, unreadCount, todayWorkout, nextWorkout } = useApp();
 
   const navItems = [
     { id: 'today', label: 'اليوم' },
-    { id: 'nutrition', label: 'خطة الغذاء والميزانية' },
-    { id: 'workout', label: 'برنامج التمارين' },
-    { id: 'shopping', label: 'قائمة المشتريات' },
-    { id: 'library', label: 'دليل الأجهزة' },
-    { id: 'progress', label: 'التقدم والمراجعة' },
+    { id: 'nutrition', label: 'جدول الأكل' },
+    { id: 'workout', label: 'جدول التمرين' },
+    { id: 'shopping', label: 'المشتريات' },
+    { id: 'library', label: 'دليل التمارين' },
+    { id: 'progress', label: 'التقدّم' },
   ];
 
   return (
@@ -79,6 +79,27 @@ export const Header: React.FC = () => {
           <button
             onClick={() => {
               setIsAdminMode(false);
+              setActiveTab('notifications');
+            }}
+            className={`relative p-2 rounded-lg transition-colors ${
+              activeTab === 'notifications' && !isAdminMode
+                ? 'text-emerald-700 bg-emerald-50'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+            title="الإشعارات"
+            aria-label={unreadCount > 0 ? `الإشعارات، ${unreadCount} جديدة` : 'الإشعارات'}
+          >
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -left-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center tabular-nums">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setIsAdminMode(false);
               setActiveTab('settings');
             }}
             className={`p-2 rounded-lg transition-colors ${
@@ -93,11 +114,11 @@ export const Header: React.FC = () => {
           </button>
 
           <button
-            onClick={() => startLiveWorkout()}
+            onClick={() => startLiveWorkout((todayWorkout ?? nextWorkout)?.id)}
             className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-sm font-semibold flex items-center gap-2 transition-all shadow-sm whitespace-nowrap"
           >
-            <Dumbbell className="w-4 h-4" />
-            <span>ابدأ حصتي</span>
+            <Dumbbell className="w-4 h-4 text-white" />
+            <span className="hidden sm:inline">ابدأ حصتي</span>
           </button>
         </div>
 

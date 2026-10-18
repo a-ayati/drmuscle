@@ -1,7 +1,9 @@
 export type GoalType = 'fat_loss' | 'muscle_gain' | 'fitness' | 'maintenance';
 export type ExperienceLevel = 'beginner' | 'returning' | 'intermediate';
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'very_active';
-export type LocationPreference = 'gym' | 'home';
+export type LocationPreference = 'gym' | 'home' | 'run' | 'walk';
+
+export type Aisle = 'خضار وفواكه' | 'لحوم ودواجن وأسماك' | 'ألبان وبيض' | 'بقوليات وحبوب' | 'مخبوزات' | 'بهارات ومؤن';
 
 export interface UserProfile {
   name: string;
@@ -38,7 +40,7 @@ export interface MealIngredient {
   portionQty: string;
   packName: string;
   packPrice: number;
-  aisle: 'خضار وفواكه' | 'لحوم ودواجن وأسماك' | 'ألبان وبيض' | 'بقوليات وحبوب' | 'بهارات ومؤن';
+  aisle: Aisle;
 }
 
 export interface Meal {
@@ -78,7 +80,7 @@ export interface DayNutritionPlan {
 export interface ShoppingItem {
   id: string;
   name: string;
-  aisle: 'خضار وفواكه' | 'لحوم ودواجن وأسماك' | 'ألبان وبيض' | 'بقوليات وحبوب' | 'بهارات ومؤن';
+  aisle: Aisle;
   recipeQty: string;
   packToBuy: string;
   estimatedPrice: number;
@@ -103,9 +105,9 @@ export interface ExerciseItem {
   id: string;
   arabicName: string;
   commonGymName: string;
-  targetMuscleGroup: 'صدر' | 'ظهر' | 'أرجل' | 'أكتاف' | 'ذراعين' | 'بطن';
+  targetMuscleGroup: 'صدر' | 'ظهر' | 'أرجل' | 'أكتاف' | 'ذراعين' | 'بطن' | 'قلب ورئتان';
   secondaryMuscles: string[];
-  equipmentType: 'أجهزة' | 'دمبل' | 'بار' | 'وزن الجسم' | 'حبال مقاومة';
+  equipmentType: 'أجهزة' | 'دمبل' | 'بار' | 'وزن الجسم' | 'حبال مقاومة' | 'بدون أدوات';
   image: string;
   machineAdjustmentGuide: string;
   breathingGuide: string;
@@ -124,6 +126,8 @@ export interface WorkoutExercisePlan {
 
 export interface DayWorkoutSession {
   id: string;
+  /** يوم الأسبوع: 0 = الأحد … 6 = السبت */
+  weekdayIndex?: number;
   dayName: string;
   title: string;
   focus: string;
@@ -156,4 +160,13 @@ export interface WeeklyReview {
   difficultyFeedback?: string;
   tasteFeedback?: string;
   budgetFeedback?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  kind: 'info' | 'success' | 'warning' | 'workout' | 'meal' | 'budget';
+  title: string;
+  body: string;
+  createdAt: number;
+  read: boolean;
 }

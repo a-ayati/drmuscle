@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { ExerciseThumb } from './ExerciseThumb';
 import {
   Search,
   Dumbbell,
@@ -20,7 +21,7 @@ export const ExerciseLibraryView: React.FC = () => {
   const [selectedMuscle, setSelectedMuscle] = useState<string>('all');
   const [selectedEquipment, setSelectedEquipment] = useState<string>('all');
 
-  const muscleGroups = ['all', 'صدر', 'ظهر', 'أرجل', 'أكتاف', 'ذراعين', 'بطن'];
+  const muscleGroups = ['all', 'صدر', 'ظهر', 'أرجل', 'أكتاف', 'بطن', 'قلب ورئتان'];
   const equipmentTypes = ['all', 'أجهزة', 'دمبل', 'بار', 'وزن الجسم', 'حبال مقاومة'];
 
   const filteredExercises = exerciseLibrary.filter((ex) => {
@@ -103,12 +104,7 @@ export const ExerciseLibraryView: React.FC = () => {
           >
             <div>
               <div className="relative h-48 w-full bg-slate-100">
-                <img
-                  src={ex.image}
-                  alt={ex.arabicName}
-                  className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-300"
-                  referrerPolicy="no-referrer"
-                />
+                <ExerciseThumb ex={ex} />
                 <div className="absolute top-2.5 right-2.5 bg-slate-900/80 backdrop-blur-xs text-white text-[11px] font-semibold px-2 py-0.5 rounded-md">
                   {ex.targetMuscleGroup} · {ex.equipmentType}
                 </div>
@@ -162,12 +158,7 @@ export const ExerciseLibraryView: React.FC = () => {
 
             {/* Media & Muscle Diagram */}
             <div className="relative rounded-xl overflow-hidden bg-slate-100 h-64 border border-slate-200">
-              <img
-                src={selectedExercise.image}
-                alt={selectedExercise.arabicName}
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
+              <ExerciseThumb ex={selectedExercise} />
               <div className="absolute bottom-3 right-3 bg-slate-900/85 backdrop-blur-xs text-white text-xs p-2.5 rounded-xl max-w-xs">
                 <span className="font-bold text-emerald-400 block mb-0.5">العضلات الثانوية المشتركة:</span>
                 <span>{selectedExercise.secondaryMuscles.join('، ')}</span>
